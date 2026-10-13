@@ -21,7 +21,7 @@ The following physical properties are configured to closely match the estimated 
 
 * Joint armature
 * Viscous damping
-* Static friction
+* Static and dynamic friction (dynamic = 0.5 × static)
 * Joint bias
 * Actuator delay
 
@@ -55,15 +55,21 @@ This step runs the PACE evolutionary optimization to identify actuator and joint
 ### Configuration
 
 * Number of environments: **4096**
-* Total identified parameters: **49**
+* Total identified parameters: **61**
 
     * 12 joint armature values
     * 12 viscous friction values
     * 12 static friction values
     * 12 joint bias values
     * 1 global delay
+    * 12 dynamic/static friction ratios (`separate_dynamic_friction=True`)
 
 In this example, the optimizer re-estimates the parameters used in the simulation data collection stage, serving as a proof-of-correctness. In real deployments, this step is used to identify parameters of custom hardware platforms.
+
+!!! note "Static and dynamic friction"
+    This example identifies static and dynamic friction separately, which adds 12 parameters compared to the original paper (61 instead of 49). The friction parameter is then the static (break-away) friction, and the dynamic friction is identified as a ratio of it in `[0, 1]`, so dynamic friction never exceeds static friction.
+
+    Setting `separate_dynamic_friction = False` in `AnymalDPaceCfg` falls back to standard Coulomb friction (static = dynamic) with 49 parameters, as in the paper. Use the split if break-away friction is significant on your system, or if you do not mind the additional parameters and complexity.
 
 ### Execution
 
@@ -83,6 +89,9 @@ pace-sim2real/logs/pace/anymal_d_sim
 ![ANYmal parameter identification](../assets/anymal_fit_web.webp)
 
 ### Performance
+
+!!! info
+    The numbers and the score plot below were obtained with PACE v0.1.x (49 parameters, torque delay). Runtime and convergence may differ with the default v0.2.0 setup (61 parameters, command delay).
 
 * Convergence: up to numerical precision (**~1e-12**)
 * Runtime: approximately **2:15 hours** on an NVIDIA RTX 3080
@@ -138,7 +147,7 @@ Use the following procedure:
 1. Import `PaceDCMotor` and `PaceDCMotorCfg` into your project.
 2. During initialization, set:
 
-    * Joint delay
+    * Joint delay (`max_delay`) and `delay_mode` (the default `"command"` is used in this example)
     * Joint bias
 
     using the values obtained from the parameter identification step.
@@ -148,6 +157,7 @@ Use the following procedure:
     * `joint_armature`
     * `joint_viscous_friction`
     * `joint_friction`
+    * `joint_dynamic_friction` (static friction × identified ratio)
 
 ### Recommended validation step
 
