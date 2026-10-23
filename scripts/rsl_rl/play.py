@@ -35,6 +35,7 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument("--headless", action="store_true", default=False, help=argparse.SUPPRESS)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -63,39 +64,34 @@ from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
-    DirectMARLEnvCfg,
-    DirectRLEnvCfg,
     ManagerBasedRLEnvCfg,
+    VideoRecorderCfg,
     multi_agent_to_single_agent,
 )
 from isaaclab.utils.assets import retrieve_file_path
-from isaaclab.utils.dict import print_dict
-from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab_rl.rsl_rl import (
-    RslRlBaseRunnerCfg,
     RslRlDistillationRunnerCfg,
     RslRlOnPolicyRunnerCfg,
     RslRlVecEnvWrapper,
-    export_policy_as_jit,
-    export_policy_as_onnx,
 )
+from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
 from isaaclab.devices import Se2Gamepad, Se2GamepadCfg
+from isaaclab_visualizers.kit import KitVisualizerCfg
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path
-from isaaclab_tasks.utils.hydra import hydra_task_config
+from isaaclab_tasks.utils import get_checkpoint_path, resolve_task_config
 
 import pace_sim2real.tasks  # noqa: F401
 
 
-@hydra_task_config(args_cli.task, args_cli.agent)
-def main(
-    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
-    agent_cfg: RslRlOnPolicyRunnerCfg | RslRlDistillationRunnerCfg,
-):
+def main():
     """Play with RSL-RL agent."""
+    env_cfg, agent_cfg = resolve_task_config(args_cli.task, args_cli.agent, overrides=hydra_args)
+    # Match training inputs without changing the public environment observation schema.
+    if isinstance(env_cfg, ManagerBasedRLEnvCfg):
+        env_cfg.observations.policy.concatenate_terms = True
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
     train_task_name = task_name.replace("-Play", "")
@@ -127,6 +123,16 @@ def main(
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
+    if args_cli.video:
+        env_cfg.sim.visualizer_cfgs = [KitVisualizerCfg(headless=True)]
+        env_cfg.video_recorders = [
+            VideoRecorderCfg(
+                source="viz:kit",
+                output_dir=os.path.join(log_dir, "videos", "play"),
+                video_length=args_cli.video_length,
+                video_interval=0,
+            )
+        ]
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
@@ -135,18 +141,6 @@ def main(
     if isinstance(env.unwrapped, DirectMARLEnv):
         # Narrow the type for the MARL->single-agent conversion to satisfy type checker
         env = multi_agent_to_single_agent(cast(DirectMARLEnv, env.unwrapped))
-
-    # wrap for video recording
-    if args_cli.video:
-        video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "play"),
-            "step_trigger": lambda step: step == 0,
-            "video_length": args_cli.video_length,
-            "disable_logger": True,
-        }
-        print("[INFO] Recording videos during training.")
-        print_dict(video_kwargs, nesting=4)
-        env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
     # wrap around environment for rsl-rl
     # RslRlVecEnvWrapper validates env.unwrapped at runtime; cast for type checker compatibility
@@ -165,27 +159,10 @@ def main(
     # obtain the trained policy for inference
     policy = runner.get_inference_policy(device=env.unwrapped.device)
 
-    # extract the neural network module
-    # we do this in a try-except to maintain backwards compatibility.
-    try:
-        # version 2.3 onwards
-        policy_nn = runner.alg.policy
-    except AttributeError:
-        # version 2.2 and below
-        policy_nn = getattr(runner.alg, "actor_critic")  # type: ignore[attr-defined]
-
-    # extract the normalizer
-    if hasattr(policy_nn, "actor_obs_normalizer"):
-        normalizer = policy_nn.actor_obs_normalizer
-    elif hasattr(policy_nn, "student_obs_normalizer"):
-        normalizer = policy_nn.student_obs_normalizer
-    else:
-        normalizer = None
-
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
-    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+    runner.export_policy_to_jit(path=export_model_dir, filename="policy.pt")
+    runner.export_policy_to_onnx(path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
 

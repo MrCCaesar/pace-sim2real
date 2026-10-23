@@ -167,5 +167,6 @@ class PaceSim2realEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.0025  # 400Hz simulation
         self.sim.render_interval = 4  # render at 100Hz
 
-        self.scene.robot.spawn.articulation_props.fix_root_link = True
+        self.sim.use_newton_actuators = False
+        self.scene.robot.spawn.fix_root_link = True
         self.sim2real.apply_friction_ratio()

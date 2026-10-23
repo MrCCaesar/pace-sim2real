@@ -17,6 +17,7 @@ parser.add_argument("--task", type=str, default="Isaac-Pace-Anymal-D-v0", help="
 parser.add_argument("--min_frequency", type=float, default=0.1, help="Minimum frequency for the chirp signal in Hz.")
 parser.add_argument("--max_frequency", type=float, default=10.0, help="Maximum frequency for the chirp signal in Hz.")
 parser.add_argument("--duration", type=float, default=20.0, help="Duration of the chirp signal in seconds.")
+parser.add_argument("--headless", action="store_true", default=False, help=argparse.SUPPRESS)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
@@ -56,6 +57,7 @@ def main():
 
     joint_order = env_cfg.sim2real.joint_order
     joint_ids = torch.tensor([articulation.joint_names.index(name) for name in joint_order], device=env.unwrapped.device)
+    joint_ids_list = joint_ids.tolist()
 
     armature = torch.tensor([0.1] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
     damping = torch.tensor([4.5] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
@@ -65,15 +67,16 @@ def main():
     time_lag = torch.tensor([[5]], dtype=torch.int, device=env.unwrapped.device)
     env.reset()
 
-    articulation.write_joint_armature_to_sim(armature, joint_ids=joint_ids, env_ids=torch.arange(len(armature)))
+    articulation.write_joint_armature_to_sim(armature, joint_ids=joint_ids_list, env_ids=[0])
     articulation.data.default_joint_armature[:, joint_ids] = armature
-    articulation.write_joint_viscous_friction_coefficient_to_sim(damping, joint_ids=joint_ids, env_ids=torch.arange(len(damping)))
+    articulation.write_joint_viscous_friction_coefficient_to_sim(damping, joint_ids=joint_ids_list, env_ids=[0])
     articulation.data.default_joint_viscous_friction_coeff[:, joint_ids] = damping
     # note: modeling pure coulomb friction if joint_friction = joint_dynamic_friction
-    articulation.write_joint_friction_coefficient_to_sim(friction, joint_ids=joint_ids, env_ids=torch.tensor([0]))
+    articulation.write_joint_friction_coefficient_to_sim(friction, joint_ids=joint_ids_list, env_ids=[0])
     articulation.data.default_joint_friction_coeff[:, joint_ids] = friction
-    articulation.write_joint_dynamic_friction_coefficient_to_sim(dynamic_friction, joint_ids=joint_ids, env_ids=torch.tensor([0]))
-    articulation.data.default_joint_dynamic_friction_coeff[:, joint_ids] = dynamic_friction
+    articulation.write_joint_dynamic_friction_coefficient_to_sim(
+        dynamic_friction, joint_ids=joint_ids_list, env_ids=[0]
+    )
     drive_types = articulation.actuators.keys()
     for drive_type in drive_types:
         drive_indices = articulation.actuators[drive_type].joint_indices

@@ -8,7 +8,7 @@ import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from isaaclab.actuators import DCMotor
+from isaaclab.actuators import DCMotor, resolve_joint_parameter
 from isaaclab.utils.types import ArticulationActions
 from isaaclab.utils import DelayBuffer
 if TYPE_CHECKING:
@@ -40,7 +40,9 @@ class PaceDCMotor(DCMotor):
                     f"encoder_bias must have {self.num_joints} elements (one per joint), "
                     f"but got {len(cfg.encoder_bias)}: {cfg.encoder_bias}"
                 )
-        self.encoder_bias = self._parse_joint_parameter(cfg.encoder_bias, 0.0)
+        self.encoder_bias = resolve_joint_parameter(
+            cfg.encoder_bias, 0.0, self.joint_names, self._num_envs, self._device
+        )
 
         if cfg.delay_mode not in ("command", "effort"):
             raise ValueError(f"delay_mode must be 'command' or 'effort', but got '{cfg.delay_mode}'.")
