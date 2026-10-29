@@ -1,0 +1,113 @@
+{
+  "synthetic": true,
+  "args": {
+    "dt": 0.0025,
+    "settle": 0.0,
+    "excite": 0.05,
+    "observe": 0.0,
+    "amplitude": 0.1,
+    "tag": "bounded20",
+    "max_steps": 20
+  },
+  "backend": "newton_mjwarp",
+  "mass_kg": 51.6357421875,
+  "mounts_body_m": [
+    [
+      -0.29199269525706767,
+      -0.18034825535840354,
+      0.2
+    ],
+    [
+      -0.29199269525706767,
+      0.17965174464159644,
+      0.2
+    ],
+    [
+      0.3080073047429323,
+      -0.18034825535840354,
+      0.2
+    ],
+    [
+      0.3080073047429323,
+      0.17965174464159644,
+      0.2
+    ]
+  ],
+  "anchor_world_m": [
+    -0.00800730474293232,
+    0.0003482553584035486,
+    4.2
+  ],
+  "free_lengths_m": [
+    1.046017494553467,
+    1.046017494553467,
+    1.046017494553467,
+    1.046017494553467
+  ],
+  "actuator_types": {
+    "legs": "PaceDCMotor"
+  },
+  "joint_names": [
+    "LF_HAA",
+    "LF_HFE",
+    "LF_KFE",
+    "LH_HAA",
+    "LH_HFE",
+    "LH_KFE",
+    "RF_HAA",
+    "RF_HFE",
+    "RF_KFE",
+    "RH_HAA",
+    "RH_HFE",
+    "RH_KFE"
+  ],
+  "floating_base": true,
+  "cgroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/pace-issue2-20steps-20261029.service",
+  "limits": {
+    "memory.max": "8589934592",
+    "memory.swap.max": "0",
+    "cpu.max": "200000 100000"
+  },
+  "completed_steps": 20,
+  "initial_state_note": "Default joint pose, gravity-balanced synthetic ropes; no settling performed",
+  "columns": [
+    "time_s",
+    "base_xyz[3]",
+    "base_quaternion_wxyz[4]",
+    "base_com_velocity_world[6]",
+    "tensions_N[4]",
+    "hook_xyz[3]",
+    "scaled_balance_residual_norm",
+    "joint_positions_rad[12]",
+    "targets_rad[12]"
+  ],
+  "completed": true,
+  "simulated_duration_s": 0.05,
+  "final_base_position_m": [
+    4.702787464339053e-06,
+    -4.6091109595636226e-08,
+    1.0007553100585938
+  ],
+  "final_base_com_velocity": [
+    0.0008495280053466558,
+    2.111276626237668e-05,
+    0.019609635695815086,
+    -0.0004974836483597755,
+    -0.004846860188990831,
+    -0.001926292316056788
+  ],
+  "final_joint_positions_rad": [
+    -0.01972861774265766,
+    0.0009065836202353239,
+    0.004185180179774761,
+    -0.019640237092971802,
+    -0.0004192489432170987,
+    -0.004569578915834427,
+    0.01979522407054901,
+    0.0006401135469786823,
+    0.0045859734527766705,
+    0.019664889201521873,
+    -0.00043062103213742375,
+    -0.004565520212054253
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "synthetic": true,
+  "length_m": 0.9,
+  "free_length_m": 1,
+  "velocity_m_s": 1,
+  "passive_generalized_force_N": -0.6,
+  "slack_force_zero": false,
+  "massless_free_body": "Error: mass and inertia of moving bodies must be larger than mjMINVAL\nElement name '', id 1, line 1"
+}

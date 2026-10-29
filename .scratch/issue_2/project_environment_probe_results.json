@@ -1,0 +1,8 @@
+{
+  "python": "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+  "config_constructed": true,
+  "cuda_available": true,
+  "fix_root_link": true,
+  "dt": 0.0025,
+  "decimation": 1
+}

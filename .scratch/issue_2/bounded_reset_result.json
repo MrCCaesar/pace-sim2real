@@ -1,0 +1,49 @@
+{
+  "completed": true,
+  "explicit_env_steps": 0,
+  "events": [
+    {
+      "stage": "preflight",
+      "elapsed_s": 7.279998044396052e-07
+    },
+    {
+      "stage": "limits_verified_runtime_imports_begin",
+      "elapsed_s": 0.0002098549998663657
+    },
+    {
+      "stage": "config_ready",
+      "elapsed_s": 4.744952109999986
+    },
+    {
+      "stage": "environment_construction_begin",
+      "elapsed_s": 4.747370923999824
+    },
+    {
+      "stage": "environment_constructed",
+      "elapsed_s": 22.590397703999997
+    },
+    {
+      "stage": "reset_complete",
+      "elapsed_s": 22.6585544699999
+    },
+    {
+      "stage": "environment_closed",
+      "elapsed_s": 23.097322192999854
+    },
+    {
+      "stage": "success",
+      "elapsed_s": 23.0977188679999
+    }
+  ],
+  "cgroup": "/user.slice/user-1000.slice/user@1000.service/app.slice/pace-issue2-reset-20261029.service",
+  "limits": {
+    "memory.max": "8589934592",
+    "memory.swap.max": "0",
+    "cpu.max": "200000 100000"
+  },
+  "floating_base": true,
+  "num_envs": 1,
+  "actuator_types": {
+    "legs": "PaceDCMotor"
+  }
+}

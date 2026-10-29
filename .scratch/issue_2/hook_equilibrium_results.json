@@ -1,0 +1,106 @@
+{
+  "synthetic": true,
+  "scope": "local static elastic feasibility only",
+  "results": {
+    "four_taut": {
+      "lengths_m": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "hook_position_m": [
+        -8.372643191355147e-26,
+        2.6399100303003277e-26,
+        -2.0
+      ],
+      "short_tensions_N": [
+        15.75836902790224,
+        15.75836902790224,
+        15.75836902790224,
+        15.75836902790224
+      ],
+      "chain_reaction_N": 54.45262976745591,
+      "residual_norm": 2.3901894686290487e-24,
+      "chain_length_error_m": 0.0,
+      "jacobian_min_singular_value": 0.005890018993137606,
+      "numerical_solver_success": true,
+      "domain_status": "static_candidate"
+    },
+    "two_taut": {
+      "lengths_m": [
+        1.0,
+        3.0,
+        3.0,
+        1.0
+      ],
+      "hook_position_m": [
+        4.651633985759541e-25,
+        -7.138539103659875e-25,
+        -2.0
+      ],
+      "short_tensions_N": [
+        15.75836902790224,
+        0.0,
+        0.0,
+        15.75836902790224
+      ],
+      "chain_reaction_N": 27.226314883727955,
+      "residual_norm": 1.1598892604376843e-23,
+      "chain_length_error_m": 0.0,
+      "jacobian_min_singular_value": 0.011779271814252543,
+      "numerical_solver_success": true,
+      "domain_status": "static_candidate"
+    },
+    "one_taut": {
+      "lengths_m": [
+        1.0,
+        3.0,
+        3.0,
+        3.0
+      ],
+      "hook_position_m": [
+        -0.32720999550189006,
+        -0.19632599730098532,
+        -1.963259973011071
+      ],
+      "short_tensions_N": [
+        5.614135798722408,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "chain_reaction_N": 5.6141357987222085,
+      "residual_norm": 1.071672160089605e-12,
+      "chain_length_error_m": 8.881784197001252e-16,
+      "jacobian_min_singular_value": 0.019449315847955607,
+      "numerical_solver_success": true,
+      "domain_status": "static_candidate"
+    },
+    "all_slack": {
+      "lengths_m": [
+        3.0,
+        3.0,
+        3.0,
+        3.0
+      ],
+      "hook_position_m": [
+        0.0,
+        0.0,
+        -2.0
+      ],
+      "short_tensions_N": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "chain_reaction_N": 0.0,
+      "residual_norm": 0.0,
+      "chain_length_error_m": 0.0,
+      "jacobian_min_singular_value": 0.0,
+      "numerical_solver_success": true,
+      "domain_status": "all_slack_invalid"
+    }
+  }
+}

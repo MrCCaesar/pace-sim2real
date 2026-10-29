@@ -1,0 +1,42 @@
+{
+  "synthetic": true,
+  "mujoco_version": "3.15.0",
+  "analytic_peak_N": 10,
+  "results": [
+    {
+      "dt_s": 0.01,
+      "sampled_peak_N": 9.996199244684355,
+      "peak_relative_error": 0.00038007553156447214,
+      "minimum_tension_N": 0.0,
+      "maximum_slack_force_N": 0.0
+    },
+    {
+      "dt_s": 0.005,
+      "sampled_peak_N": 9.996759913540076,
+      "peak_relative_error": 0.00032400864599235746,
+      "minimum_tension_N": 0.0,
+      "maximum_slack_force_N": 0.0
+    },
+    {
+      "dt_s": 0.0025,
+      "sampled_peak_N": 9.999913014898487,
+      "peak_relative_error": 8.698510151283756e-06,
+      "minimum_tension_N": 0.0,
+      "maximum_slack_force_N": 0.0
+    },
+    {
+      "dt_s": 0.00125,
+      "sampled_peak_N": 9.9999900985547,
+      "peak_relative_error": 9.901445299220768e-07,
+      "minimum_tension_N": 0.0,
+      "maximum_slack_force_N": 0.0
+    },
+    {
+      "dt_s": 0.000625,
+      "sampled_peak_N": 10.000004681592078,
+      "peak_relative_error": 4.681592077560026e-07,
+      "minimum_tension_N": 0.0,
+      "maximum_slack_force_N": 0.0
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "completed_steps": 20,
+  "simulated_duration_s": 0.05,
+  "all_samples_finite": true,
+  "tension_min_N": [
+    125.55919836032724,
+    125.55336408880578,
+    125.66199724821763,
+    125.65616291122906
+  ],
+  "tension_max_N": [
+    134.16316498455316,
+    134.16316498455316,
+    134.16316498455316,
+    134.16316498455316
+  ],
+  "max_scaled_balance_residual_norm": 2.68974454298572e-12,
+  "max_chain_length_error_m": 2.6645352591003757e-15,
+  "base_displacement_m": [
+    4.702787464339053e-06,
+    -4.6091109595636226e-08,
+    0.00075531005859375
+  ],
+  "max_base_com_speed_m_s": 0.020545173437977307,
+  "max_command_offset_rad": 0.016948798671364784,
+  "max_final_joint_change_rad": 0.01979522407054901,
+  "final_base_com_velocity": [
+    0.0008495280053466558,
+    2.111276626237668e-05,
+    0.019609635695815086,
+    -0.0004974836483597755,
+    -0.004846860188990831,
+    -0.001926292316056788
+  ],
+  "scope": "20-step synthetic integration only; no steady equilibrium, no convergence or real-force validation"
+}

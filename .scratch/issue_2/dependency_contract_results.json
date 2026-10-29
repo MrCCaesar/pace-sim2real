@@ -1,0 +1,55 @@
+{
+  "python": "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+  "project_pin": "42f7def118c2c4299ce493457bafd4e8a22a696e",
+  "isaaclab_pin": "42f7def118c2c4299ce493457bafd4e8a22a696e",
+  "installed_commit": "42f7def118c2c4299ce493457bafd4e8a22a696e",
+  "locked_commit": "42f7def118c2c4299ce493457bafd4e8a22a696e",
+  "add_usd_calls": [
+    {
+      "path": "source/isaaclab_newton/isaaclab_newton/cloner/newton_clone_utils.py",
+      "line": 128,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    },
+    {
+      "path": "source/isaaclab_newton/isaaclab_newton/cloner/replicate.py",
+      "line": 179,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    },
+    {
+      "path": "source/isaaclab_newton/test/physics/test_newton_manager_abstraction.py",
+      "line": 751,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    },
+    {
+      "path": "source/isaaclab_newton/test/sim/test_cable_usd_import.py",
+      "line": 30,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    },
+    {
+      "path": "source/isaaclab_newton/test/sim/test_cable_usd_import.py",
+      "line": 84,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    },
+    {
+      "path": "source/isaaclab_newton/test/sim/test_cable_usd_import.py",
+      "line": 112,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    },
+    {
+      "path": "source/isaaclab_newton/test/sim/test_mpm_spawners.py",
+      "line": 76,
+      "unsupported": [],
+      "dynamic_kwargs": false
+    }
+  ],
+  "unsafe_checkpoint_parameter_present": true,
+  "runtime_modules_loaded": [],
+  "limitation": "AST checks explicit keyword names only; no runtime or dynamic kwargs validation",
+  "passed": true
+}

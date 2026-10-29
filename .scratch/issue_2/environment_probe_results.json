@@ -1,0 +1,4 @@
+{
+  "config_constructed": false,
+  "traceback": "Traceback (most recent call last):\n  File \"<stdin>\", line 5, in <module>\n  File \"/home/sevnce-mr/pace-sim2real/src/pace_sim2real/__init__.py\", line 18, in <module>\n    from .optim import CMAESOptimizer\n  File \"/home/sevnce-mr/pace-sim2real/src/pace_sim2real/optim/__init__.py\", line 5, in <module>\n    from .cma_es import CMAESOptimizer\n  File \"/home/sevnce-mr/pace-sim2real/src/pace_sim2real/optim/cma_es.py\", line 7, in <module>\n    import cmaes\nModuleNotFoundError: No module named 'cmaes'\n"
+}

@@ -1,0 +1,47 @@
+{
+  "synthetic": true,
+  "backend": "stdlib RK4 reference only",
+  "analytic_peak_N": 10,
+  "results": [
+    {
+      "dt_s": 0.01,
+      "sampled_peak_N": 9.99619924468436,
+      "peak_relative_error": 0.00038007553156393925,
+      "impulse_to_first_nonpositive_velocity_Ns": 1.0254979735414105,
+      "velocity_m_s": -0.02549797354141048,
+      "momentum_residual": 0.0
+    },
+    {
+      "dt_s": 0.005,
+      "sampled_peak_N": 9.996759913540085,
+      "peak_relative_error": 0.0003240086459914693,
+      "impulse_to_first_nonpositive_velocity_Ns": 1.0255001166539919,
+      "velocity_m_s": -0.025500116653992218,
+      "momentum_residual": 3.3306690738754696e-16
+    },
+    {
+      "dt_s": 0.0025,
+      "sampled_peak_N": 9.999913014898478,
+      "peak_relative_error": 8.698510152171934e-06,
+      "impulse_to_first_nonpositive_velocity_Ns": 1.0005036236035554,
+      "velocity_m_s": -0.0005036236035552664,
+      "momentum_residual": 2.220446049250313e-16
+    },
+    {
+      "dt_s": 0.00125,
+      "sampled_peak_N": 9.999990098554692,
+      "peak_relative_error": 9.901445308102552e-07,
+      "impulse_to_first_nonpositive_velocity_Ns": 1.0005036607933644,
+      "velocity_m_s": -0.0005036607933641551,
+      "momentum_residual": 2.220446049250313e-16
+    },
+    {
+      "dt_s": 0.000625,
+      "sampled_peak_N": 10.00000468159208,
+      "peak_relative_error": 4.681592079336383e-07,
+      "impulse_to_first_nonpositive_velocity_Ns": 1.0005036747098563,
+      "velocity_m_s": -0.0005036747098560879,
+      "momentum_residual": 2.220446049250313e-16
+    }
+  ]
+}
