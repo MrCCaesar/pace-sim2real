@@ -13,16 +13,16 @@ import torch
 ANYDRIVE_PACE_ACTUATOR_CFG = PaceDCMotorCfg(
     joint_names_expr=[".*HAA", ".*HFE", ".*KFE"],
     saturation_effort=140.0,
-    effort_limit=89.0,
-    velocity_limit=8.5,
-    stiffness={".*": 85.0},  # P gain in Nm/rad
-    damping={".*": 0.6},  # D gain in Nm s/rad
-    encoder_bias={".*": 0.0},  # encoder bias in radians
+    actuator_effort_limit=89.0,
+    actuator_velocity_limit=8.5,
+    stiffness=85.0,  # P gain in Nm/rad
+    damping=0.6,  # D gain in Nm s/rad
+    encoder_bias=0.0,  # encoder bias in radians
     # note: modeling coulomb friction if friction = dynamic_friction
     # > in newer Isaac Sim versions, friction is renamed to static_friction
-    friction={".*": 0.0},  # static friction coefficient (Nm)
-    dynamic_friction={".*": 0.0},  # dynamic friction coefficient (Nm)
-    viscous_friction={".*": 0.0},  # viscous friction coefficient (Nm s/rad)
+    friction=0.0,  # static friction coefficient (Nm)
+    dynamic_friction=0.0,  # dynamic friction coefficient (Nm)
+    viscous_friction=0.0,  # viscous friction coefficient (Nm s/rad)
     max_delay=10,  # max delay in simulation steps
 )
 
@@ -65,12 +65,13 @@ class ANYmalDPaceSceneCfg(PaceSim2realSceneCfg):
     """Configuration for Anymal-D robot in Pace Sim2Real environment."""
     robot: ArticulationCfg = ANYMAL_D_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot", init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
                                                   actuators={"legs": ANYDRIVE_PACE_ACTUATOR_CFG})
+    robot.spawn.fix_root_link = True
 
 
 @configclass
 class AnymalDPaceEnvCfg(PaceSim2realEnvCfg):
 
-    scene: ANYmalDPaceSceneCfg = ANYmalDPaceSceneCfg()
+    scene: ANYmalDPaceSceneCfg = ANYmalDPaceSceneCfg(num_envs=4096, env_spacing=2.5)
     sim2real: PaceCfg = AnymalDPaceCfg()
 
     def __post_init__(self):

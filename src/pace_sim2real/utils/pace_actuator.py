@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import torch
+import warp as wp
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from isaaclab.actuators import DCMotor
+from isaaclab.actuators.actuator_base import resolve_joint_parameter
 from isaaclab.utils.types import ArticulationActions
 from isaaclab.utils import DelayBuffer
 if TYPE_CHECKING:
@@ -40,7 +42,14 @@ class PaceDCMotor(DCMotor):
                     f"encoder_bias must have {self.num_joints} elements (one per joint), "
                     f"but got {len(cfg.encoder_bias)}: {cfg.encoder_bias}"
                 )
-        self.encoder_bias = self._parse_joint_parameter(cfg.encoder_bias, 0.0)
+        if isinstance(cfg.encoder_bias, (list, tuple)):
+            self.encoder_bias = torch.tensor(cfg.encoder_bias, device=self._device, dtype=torch.float32).repeat(
+                self._num_envs, 1
+            )
+        else:
+            self.encoder_bias = resolve_joint_parameter(
+                cfg.encoder_bias, 0.0, self.joint_names, self._num_envs, self._device
+            )
 
         if cfg.delay_mode not in ("command", "effort"):
             raise ValueError(f"delay_mode must be 'command' or 'effort', but got '{cfg.delay_mode}'.")
@@ -50,11 +59,12 @@ class PaceDCMotor(DCMotor):
         for buffer in self.delay_buffers.values():
             buffer.set_time_lag(cfg.max_delay, torch.arange(self._num_envs, device=self._device))
 
-    def reset(self, env_ids: Sequence[int]):
-        super().reset(env_ids)
+    def reset(self, env_ids: Sequence[int] | slice | None = None, env_mask: wp.array | None = None):
+        super().reset(env_ids, env_mask)
+        selected = wp.to_torch(env_mask) if env_mask is not None else env_ids
         # reset buffers
         for buffer in self.delay_buffers.values():
-            buffer.reset(env_ids)
+            buffer.reset(selected)
 
     def update_encoder_bias(self, encoder_bias: torch.Tensor):
         self.encoder_bias = encoder_bias

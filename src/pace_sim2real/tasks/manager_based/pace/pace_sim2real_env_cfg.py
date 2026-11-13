@@ -14,13 +14,57 @@ from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 # from isaaclab.managers import SceneEntityCfg
+from isaaclab.physics import PhysxAutoCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sim import SimulationCfg
+from isaaclab.visualizers import VisualizerCfg
+from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab_newton.physics import (
+    KaminoPADMMSolverCfg,
+    MJWarpSolverCfg,
+    NewtonCfg,
+    NewtonCollisionPipelineCfg,
+    NewtonShapeCfg,
+)
+from isaaclab_ov.physics import OvPhysxCfg
+from isaaclab_physx.physics import PhysxCfg
+
+from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
 
+
+##
+# Physics backend presets
+##
+
+
+@configclass
+class PhysicsCfg(PresetCfg):
+    """Shared backend presets for locomotion velocity environments."""
+
+    isaacsim_physx = PhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
+    ovphysx = OvPhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
+    physx = PhysxAutoCfg(isaacsim_physx=isaacsim_physx, ovphysx=ovphysx)
+    newton_mjwarp = NewtonCfg(
+        solver_cfg=MJWarpSolverCfg(
+            njmax=1000,
+            nconmax=300,
+            cone="pyramidal",
+            impratio=1.0,
+            integrator="implicitfast",
+            use_mujoco_contacts=False,
+        ),
+        collision_cfg=NewtonCollisionPipelineCfg(max_triangle_pairs=2_500_000),
+        num_substeps=2,
+        debug_mode=False,
+        default_shape_cfg=NewtonShapeCfg(margin=0.0, ke=160000.0, kd=1100.0),
+    )
+    newton_kamino = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))
+    default = newton_mjwarp
 
 ##
 # Scene definition
@@ -29,24 +73,35 @@ from . import mdp
 
 @configclass
 class PaceSim2realSceneCfg(InteractiveSceneCfg):
+    """Configuration for the flat scene with a legged robot."""
+
 
     # ground plane
-    ground = AssetBaseCfg(
+    ground = TerrainImporterCfg(
         prim_path="/World/ground",
-        spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
+        terrain_type="plane",
+        collision_group=-1,
+        physics_material=sim_utils.PhysxRigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+        ),
+        visual_material=sim_utils.MdlFileCfg(
+            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
+            project_uvw=True,
+            texture_scale=(0.25, 0.25),
+        ),
+        debug_vis=False,
     )
-    env_spacing: float = 2.5
-    num_envs: int = 4096
 
-    # robots
-    robot: ArticulationCfg = MISSING
 
     # lights
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
         spawn=sim_utils.DomeLightCfg(
             intensity=750.0,
-            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            texture_file=f"{ISAACLAB_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
         ),
     )
 
@@ -136,6 +191,22 @@ class PaceCfg:
         elif num_params != num_before + num_joints:
             raise ValueError(f"Expected {num_before} or {num_before + num_joints} bounds with separate dynamic friction, got {num_params}.")
 
+    def undo_friction_ratio(self) -> None:
+        """Remove appended friction ratios and disable separate dynamic friction."""
+        if not self.separate_dynamic_friction:
+            return
+        num_joints = len(self.joint_order)
+        num_before = 4 * num_joints + 1
+        num_params = self.bounds_params.shape[0]
+        if num_params == num_before + num_joints:
+            self.bounds_params = self.bounds_params[:num_before].clone()
+        elif num_params != num_before:
+            raise ValueError(
+                f"Expected {num_before} or {num_before + num_joints} bounds "
+                f"with separate dynamic friction, got {num_params}."
+            )
+        self.separate_dynamic_friction = False
+
 ##
 # Environment configuration
 ##
@@ -143,8 +214,12 @@ class PaceCfg:
 
 @configclass
 class PaceSim2realEnvCfg(ManagerBasedRLEnvCfg):
+
+    # Simulation settings
+    # PACE's custom delay and encoder bias run in the Python actuator model.
+    sim: SimulationCfg = SimulationCfg(physics=PhysicsCfg(), use_newton_actuators=False)
     # Scene settings
-    scene: PaceSim2realSceneCfg = PaceSim2realSceneCfg()
+    scene: PaceSim2realSceneCfg = PaceSim2realSceneCfg(num_envs=4096, env_spacing=2.5)
     # Basic settings
     actions: ActionsCfg = ActionsCfg()  # action = joint position targets (scale = 1.0 -> impedance control)
 
@@ -161,11 +236,15 @@ class PaceSim2realEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 1
         self.episode_length_s = 99999.0  # long episodes
         # viewer settings
-        self.viewer.lookat = (0.0, 0.0, 0.8)
-        self.viewer.eye = (2.0, 2.0, 1.5)
+        self.sim.visualizer_cfgs = VisualizerCfg(eye=(4.5, 0.0, 6.0),
+                                                lookat=(0.0, 0.0, 0.8))
         # simulation settings
         self.sim.dt = 0.0025  # 400Hz simulation
         self.sim.render_interval = 4  # render at 100Hz
 
-        self.scene.robot.spawn.articulation_props.fix_root_link = True
         self.sim2real.apply_friction_ratio()
+
+    def validate_config(self) -> None:
+        """Adapt friction bounds after the physics preset has been resolved."""
+        if isinstance(self.sim.physics, NewtonCfg):
+            self.sim2real.undo_friction_ratio()
