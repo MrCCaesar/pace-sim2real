@@ -1,0 +1,18 @@
+{
+    "extraPaths": [
+        "src",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_assets",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_contrib",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_experimental",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_newton",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_ov",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_physx",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_ppisp",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_rl",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_tasks",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_tasks_experimental",
+        "/home/sevnce-mr/IsaacLab/source/isaaclab_visualizers"
+    ],
+    "extends": "./pyproject.toml"
+}

@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None):
     args_cli.device = env_cfg.sim.device
 
     pre_launch_video_config(env_cfg, args_cli)
-    log_dir = os.path.abspath(os.path.join("logs", "diffdrive_agent", normalize_task_name(args_cli.task)))
+    log_dir = os.path.abspath(os.path.join("logs", "pace-sim2real", normalize_task_name(args_cli.task)))
     try:
         validate(env_cfg)
     except (TypeError, ValueError) as exc:
