@@ -4,24 +4,26 @@
 
 # import math
 from dataclasses import MISSING
-import torch
 
 import isaaclab.sim as sim_utils
-from isaaclab.assets import ArticulationCfg, AssetBaseCfg
+import torch
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
+
 # from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import TerminationTermCfg as DoneTerm
+
 # from isaaclab.managers import SceneEntityCfg
 from isaaclab.physics import PhysxAutoCfg
-from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
-from isaaclab.visualizers import VisualizerCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab.visualizers import VisualizerCfg
 from isaaclab_newton.physics import (
     KaminoPADMMSolverCfg,
     MJWarpSolverCfg,
@@ -31,11 +33,9 @@ from isaaclab_newton.physics import (
 )
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
-
 from isaaclab_tasks.utils import PresetCfg
 
 from . import mdp
-
 
 ##
 # Physics backend presets
@@ -66,6 +66,7 @@ class PhysicsCfg(PresetCfg):
     newton_kamino = NewtonCfg(solver_cfg=KaminoPADMMSolverCfg(max_contacts_per_world=64))
     default = newton_mjwarp
 
+
 ##
 # Scene definition
 ##
@@ -74,7 +75,6 @@ class PhysicsCfg(PresetCfg):
 @configclass
 class PaceSim2realSceneCfg(InteractiveSceneCfg):
     """Configuration for the flat scene with a legged robot."""
-
 
     # ground plane
     ground = TerrainImporterCfg(
@@ -95,13 +95,14 @@ class PaceSim2realSceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
 
-
     # lights
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
         spawn=sim_utils.DomeLightCfg(
             intensity=750.0,
-            texture_file=f"{ISAACLAB_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            texture_file=(
+                f"{ISAACLAB_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr"
+            ),
         ),
     )
 
@@ -114,7 +115,10 @@ class PaceSim2realSceneCfg(InteractiveSceneCfg):
 @configclass
 class ActionsCfg:
     """Action specifications for the MDP."""
-    joint_pos = mdp.JointPositionActionCfg(asset_name="robot", joint_names=[".*"], scale=1.0, use_default_offset=False)  # actions = absolute joint position targets
+
+    joint_pos = mdp.JointPositionActionCfg(
+        asset_name="robot", joint_names=[".*"], scale=1.0, use_default_offset=False
+    )  # actions = absolute joint position targets
 
 
 @configclass
@@ -124,6 +128,7 @@ class ObservationsCfg:
     @configclass
     class PolicyCfg(ObsGroup):
         """Observations for policy group."""
+
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
         actions = ObsTerm(func=mdp.last_action)
@@ -139,33 +144,41 @@ class ObservationsCfg:
 @configclass
 class RewardsCfg:
     """Reward terms for the MDP."""
+
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=0.0)
 
 
 @configclass
 class TerminationsCfg:
     """Termination terms for the MDP."""
+
     time_out = DoneTerm(func=mdp.time_out, time_out=False)
 
 
 @configclass
 class CMAESOptimizerCfg:
     """CMA-ES optimizer configuration."""
+
     max_iteration: int = 200
     epsilon: float = 1e-2
     sigma: float = 0.5
     save_interval: int = 10
-    save_optimization_process: bool = False  # consume more disk space if True, saves optimization process after finishing
+    save_optimization_process: bool = (
+        False  # consume more disk space if True, saves optimization process after finishing
+    )
 
 
 @configclass
 class PaceCfg:
     """Overall configuration for Pace Sim2Real task."""
+
     cmaes: CMAESOptimizerCfg = CMAESOptimizerCfg()
 
     robot_name: str = MISSING
     data_dir: str = MISSING
     joint_order: list = MISSING
+    leg_order: list = MISSING
+    wheel_order: list | None = None
     bounds_params: torch.Tensor = MISSING
 
     separate_dynamic_friction: bool = False
@@ -182,20 +195,25 @@ class PaceCfg:
         """Extend the parameter bounds by the dynamic to static friction ratios."""
         if not self.separate_dynamic_friction:
             return
-        num_joints = len(self.joint_order)
+        num_joints = len(self.joint_order + (self.wheel_order if self.wheel_order is not None else []))
         num_params = self.bounds_params.shape[0]
         num_before = 4 * num_joints + 1
         if num_params == num_before:
-            ratio_bounds = torch.tensor(self.friction_ratio_bounds, dtype=self.bounds_params.dtype).repeat(num_joints, 1)
+            ratio_bounds = torch.tensor(self.friction_ratio_bounds, dtype=self.bounds_params.dtype).repeat(
+                num_joints, 1
+            )
             self.bounds_params = torch.cat([self.bounds_params, ratio_bounds], dim=0)
         elif num_params != num_before + num_joints:
-            raise ValueError(f"Expected {num_before} or {num_before + num_joints} bounds with separate dynamic friction, got {num_params}.")
+            raise ValueError(
+                f"Expected {num_before} or {num_before + num_joints} bounds "
+                f"with separate dynamic friction, got {num_params}."
+            )
 
     def undo_friction_ratio(self) -> None:
         """Remove appended friction ratios and disable separate dynamic friction."""
         if not self.separate_dynamic_friction:
             return
-        num_joints = len(self.joint_order)
+        num_joints = len(self.joint_order + (self.wheel_order if self.wheel_order is not None else []))
         num_before = 4 * num_joints + 1
         num_params = self.bounds_params.shape[0]
         if num_params == num_before + num_joints:
@@ -207,6 +225,7 @@ class PaceCfg:
             )
         self.separate_dynamic_friction = False
 
+
 ##
 # Environment configuration
 ##
@@ -214,7 +233,6 @@ class PaceCfg:
 
 @configclass
 class PaceSim2realEnvCfg(ManagerBasedRLEnvCfg):
-
     # Simulation settings
     # PACE's custom delay and encoder bias run in the Python actuator model.
     sim: SimulationCfg = SimulationCfg(physics=PhysicsCfg(), use_newton_actuators=False)
@@ -236,8 +254,7 @@ class PaceSim2realEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 1
         self.episode_length_s = 99999.0  # long episodes
         # viewer settings
-        self.sim.visualizer_cfgs = VisualizerCfg(eye=(4.5, 0.0, 6.0),
-                                                lookat=(0.0, 0.0, 0.8))
+        self.sim.visualizer_cfgs = VisualizerCfg(eye=(4.5, 0.0, 6.0), lookat=(0.0, 0.0, 0.8))
         # simulation settings
         self.sim.dt = 0.0025  # 400Hz simulation
         self.sim.render_interval = 4  # render at 100Hz

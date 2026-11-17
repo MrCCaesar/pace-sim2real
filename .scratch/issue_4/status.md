@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR1 Implement complete — #8/#9 implemented and committed (2d1f78d, 3076912). Two-axis review against 3a02f00 has no remaining material findings. Awaiting explicit Verify approval; manual GUI acceptance remains pending.
+Current stage: CR2 Research evidence consolidated. After Isaac Sim 6.2 installation, Newton and Kit PhysX minimal probes both passed (2 envs, 40 steps). User requested a normalized WIP checkpoint; existing mixed-joint integration is incomplete (67 tests passed, 3 failed; undefined trajectory). Awaiting explicit Specify approval. CR1 manual GUI acceptance remains pending.
 
 ## Delivery
 
@@ -49,3 +49,23 @@ CR1 implementation checks: 67 tests passed; Pyright/Ruff passed; native X5 40-sa
 Review follow-up fixes validated: cancellation during escalation reaps child, timing tests directly observe capped publication/skipped frames, and IPC release no longer waits for traceback GC. Final full suite 70 passed in 13.69 s without warnings; Pyright0 and applicable pre-commit hooks passed. Follow-up commit and reviewer confirmation pending.
 
 Final CR1 handoff: both independent reviewers confirmed no remaining material Standards/Spec findings after 3076912. Complete test suite70 passed13.69s, no warnings; Pyright0; applicable pre-commit hooks passed with the pre-existing missing-license-template exception. Real X5 mixed-sign GUI/headless short runs produced identical five-tensor datasets. Work committed on current branch per implement skill. User-owned unstaged changes/assets preserved; no push or issue state changes. Next: user-approved Verify, including explicit manual camera/window-manager close evidence and acceptance reconciliation.
+
+CR1 formal Verify authorized (“进入 Verify”) and software checks completed. Evidence: verification.md and cr1-verify-results.json. Independent CLI cases exited0/0/0/1 as expected; five tensors exactly matched and old output hash survived failed viewer startup. Human GUI acceptance question is pending. No production code changes, new commits, pushes or GitHub writes this stage.
+
+CR2 initiated from user request to preserve PaceCfg leg_order/wheel_order and extend data_collection/fit/CMA-ES to wheel velocities. Read-only source review underway; requirements.md records confirmed scope, current integration gaps and round1 questions. Stage order restarts at Explore for this new scope; no production edits, simulations, commits or tracker writes.
+
+CR2 Q1–Q3 confirmed: pure-leg/three-field compatibility (time,dof_pos,des_dof_pos clarified), mixed MuJoCo/Isaac Lab data support, joint leg/wheel fitting outcome with separate errors, and explicit task/data mismatch failure. Next Explore questions Q4/Q5 cover wheel parameter scope and shared vs separate control delays.
+
+CR2 Q4/Q5 confirmed: wheel armature/damping/friction identification; position encoder bias for legs only, no new wheel measurement bias; one shared leg/wheel delay. Next Explore Q6–Q8: supported backends, initially moving wheels and mixed saved fitting results.
+
+CR2 Q6–Q8 confirmed: retain Newton/PhysX, support nonzero initial wheel speeds, persist/show both response groups. Final Explore frontier Q9/Q10 covers data timing/command semantics and software versus user-owned physical fitting acceptance. Research is not yet authorized.
+
+CR2 Q9/Q10 confirmed (“9. yes 10. yes”): aligned actual-sample timestamps and pre-delay desired-command semantics; bounded controlled software identification acceptance, with real-model convergence/physical plausibility user-owned. Explore complete; research handoff recorded in requirements.md. No code changes, tests, simulations, commits or tracker writes in this turn.
+
+CR2 Research: installed Isaac Lab3.0.0 source, cmaes0.13.1 metadata/source and current data/optimizer consumers investigated. Key risks: action mapping, legacy timestamps, source-dependent bias physics, mixed-unit loss, parameter count and result provenance. Research.md records alternatives and E1/E2 proposals; none run. User native trajectory edit conflicts with CR1 contract and awaits clarification; preserve working tree.
+
+User trajectory clarification supersedes prior CR1 physical-center formula for forthcoming alignment: (centers+sin)*amplitudes*directions, with no prior direction multiplication. Current initialization/history mismatch recorded; no production edits made.
+
+CR2 experiments: CPU exit0 (8 generations/population2; warnings and current-layout/zero-score defects documented); Newton2env40step probe passed13.004s; Kit PhysX failed before simulation3.001s due absent IsaacSim, with OVPhysX also not installed. Durable evidence cr2-research-results.json. No production edits or dependency installation. Research design decisions remain for explicit Specify approval.
+
+2026-11-17 checkpoint: user explicitly requested retesting after Isaac Sim installation, normalization, VS Code cache ignore rules and a local commit. EULA explicitly accepted for test processes. PhysX USD import-order failure resolved only in the temporary probe; PhysX passed9.003s and Newton passed8.003s. Added .vscode database/cache ignores, normalized 14 Python files and removed a dangling incomplete import. Preserved user functional edits and recorded remaining failures; no CR2 implementation or stage advance, push, dependency installation or issue write. Next: user-approved Specify to resolve documented contracts and plan production fixes.

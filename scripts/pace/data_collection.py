@@ -20,13 +20,11 @@ import sys
 import warnings
 
 import gymnasium as gym
+import isaaclab_tasks  # noqa: F401
 import torch
-from tensordict import TensorDict
-
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.cli import load_external_tasks
 from isaaclab.utils import validate
-
 from isaaclab_rl.entrypoints.common import (
     add_video_args,
     apply_env_overrides,
@@ -35,23 +33,13 @@ from isaaclab_rl.entrypoints.common import (
     enable_cameras_for_video,
     normalize_task_name,
     pre_launch_video_config,
-    video_playback_steps,
 )
-
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import (
-    resolve_task_config,
-    setup_preset_cli,
-)
+from isaaclab_tasks.utils import resolve_task_config, setup_preset_cli
 
 """Rest everything follows."""
 
-import gymnasium as gym
-import torch
-
-import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import parse_env_cfg
 from torch import pi
+
 from pace_sim2real.utils import project_root
 
 _SEED = 42
@@ -87,14 +75,25 @@ def main(argv: list[str] | None = None):
         # reset environment
         articulation = env.unwrapped.scene["robot"]
 
+        legs_order = env_cfg.sim2real.leg_order
+        wheels_order = env_cfg.sim2real.wheel_order if env_cfg.sim2real.wheel_order is not None else []
         joint_order = env_cfg.sim2real.joint_order
-        joint_ids = torch.tensor([articulation.joint_names.index(name) for name in joint_order], device=env.unwrapped.device)
+        leg_ids = torch.tensor(
+            [articulation.joint_names.index(name) for name in legs_order], device=env.unwrapped.device
+        )
+        wheel_ids = torch.tensor(
+            [articulation.joint_names.index(name) for name in wheels_order], device=env.unwrapped.device
+        )
+        joint_ids = torch.tensor(
+            [articulation.joint_names.index(name) for name in joint_order], device=env.unwrapped.device
+        )
 
         armature = torch.tensor([0.1] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
         damping = torch.tensor([4.5] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
         friction = torch.tensor([0.05] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)  # static friction
         dynamic_friction = 0.5 * friction  # dynamic friction (must not exceed static friction)
         bias = torch.full_like(armature, 0.05)
+        bias[wheel_ids].fill_(0.0)  # no bias for wheels
         env_ids = torch.arange(env.unwrapped.num_envs, device=env.unwrapped.device)
         time_lag = torch.full((len(env_ids),), 5, dtype=torch.long, device=env.unwrapped.device)
         env.reset()
@@ -123,9 +122,7 @@ def main(argv: list[str] | None = None):
             value.expand(len(env_ids), len(joint_ids)).contiguous()
             for value in (armature, damping, friction, dynamic_friction, bias)
         )
-        articulation.write_joint_armature_to_sim_index(
-            armature=armature, joint_ids=joint_ids, env_ids=env_ids
-        )
+        articulation.write_joint_armature_to_sim_index(armature=armature, joint_ids=joint_ids, env_ids=env_ids)
         if "isaaclab_newton" in physics_cfg_modules:
             # Newton exposes one dry-friction effort (MJWarp: dof_frictionloss), not two coefficients.
             if not torch.equal(friction, dynamic_friction):
@@ -166,7 +163,11 @@ def main(argv: list[str] | None = None):
                 drive_indices = torch.as_tensor(drive_indices, dtype=torch.long, device=joint_ids.device)
             comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
             if not torch.all(comparison_matrix.sum(dim=0) == 1):
-                raise ValueError(f"Each joint in actuator {drive_type!r} must occur exactly once in joint_order.")
+                warnings.warn(
+                    "Each joint in actuator {drive_type!r} must occur exactly once in joint_order.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
             actuator.update_time_lags(time_lag)
             actuator.update_encoder_bias(bias[:, drive_joint_idx])
@@ -183,28 +184,36 @@ def main(argv: list[str] | None = None):
         f1 = args_cli.max_frequency  # Hz
 
         # Linear chirp: phase = 2*pi*(f0*t + (f1-f0)/(2*duration)*t^2)
-        phase = 2 * pi * (f0 * t + ((f1 - f0) / (2 * duration)) * t ** 2)
+        phase = 2 * pi * (f0 * t + ((f1 - f0) / (2 * duration)) * t**2)
         chirp_signal = torch.sin(phase)
 
-        trajectory = torch.zeros((num_steps, len(joint_ids)), device=env.unwrapped.device)
-        trajectory[:, :] = chirp_signal.unsqueeze(-1)
-        trajectory_directions = torch.tensor(
-            [1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0],
-            device=env.unwrapped.device
+        leg_trajectory = torch.zeros((num_steps, len(leg_ids)), device=env.unwrapped.device)
+        leg_trajectory[:, :] = chirp_signal.unsqueeze(-1)
+        leg_trajectory_directions = torch.tensor(
+            [1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0], device=env.unwrapped.device
         )
-        trajectory_bias = torch.tensor(
-            [0.0, 0.4, 0.8] * 4,
-            device=env.unwrapped.device
+        leg_trajectory_bias = torch.tensor([0.0, 0.4, 0.8] * 4, device=env.unwrapped.device)
+        leg_trajectory_scale = torch.tensor([0.25, 0.5, -2.0] * 4, device=env.unwrapped.device)
+        leg_trajectory[:, :] = (
+            (leg_trajectory + leg_trajectory_bias.unsqueeze(0))
+            * leg_trajectory_directions.unsqueeze(0)
+            * leg_trajectory_scale.unsqueeze(0)
         )
-        trajectory_scale = torch.tensor(
-            [0.25, 0.5, -2.0] * 4,
-            device=env.unwrapped.device
-        )
-        trajectory[:, joint_ids] = (trajectory[:, joint_ids] + trajectory_bias.unsqueeze(0)) * trajectory_directions.unsqueeze(0) * trajectory_scale.unsqueeze(0)
+
+        if env_cfg.sim2real.wheel_order is not None:
+            wheel_trajectory = torch.zeros((num_steps, len(wheel_ids)), device=env.unwrapped.device)
+            wheel_trajectory[:, :] = chirp_signal.unsqueeze(-1)
+            wheel_trajectory_directions = torch.tensor([1.0, 1.0, 1.0, 1.0], device=env.unwrapped.device)
+            wheel_trajectory_scale = torch.tensor([10.0, 10.0, 10.0, 10.0], device=env.unwrapped.device)
+            wheel_trajectory[:, :] = (
+                (wheel_trajectory + 0.0)
+                * wheel_trajectory_directions.unsqueeze(0)
+                * wheel_trajectory_scale.unsqueeze(0)
+            )
 
         articulation.write_joint_position_to_sim_index(
-            position=(trajectory[0, joint_ids].unsqueeze(0) + bias).contiguous(),
-            joint_ids=joint_ids,
+            position=(leg_trajectory[0, leg_ids].unsqueeze(0) + bias[:, leg_ids]).contiguous(),
+            joint_ids=leg_ids,
             env_ids=env_ids,
         )
         articulation.write_joint_velocity_to_sim_index(
@@ -229,27 +238,35 @@ def main(argv: list[str] | None = None):
                 dof_target_pos_buffer[counter, :] = articulation.actuators.target_command.position.torch[0, joint_ids]
                 counter += 1
                 if counter % 400 == 0:
-                    print(f"[INFO]: Step {counter/sample_rate} seconds")
+                    print(f"[INFO]: Step {counter / sample_rate} seconds")
                 if counter >= num_steps:
                     break
 
-
     from time import sleep
+
     sleep(1)  # wait a bit for everything to settle
 
     (data_dir).mkdir(parents=True, exist_ok=True)
-    torch.save({
-        "time": time_data.cpu(),
-        "dof_pos": dof_pos_buffer.cpu(),
-        "des_dof_pos": dof_target_pos_buffer.cpu(),
-    }, data_dir / "chirp_data.pt")
+    torch.save(
+        {
+            "time": time_data.cpu(),
+            "dof_pos": dof_pos_buffer.cpu(),
+            "des_dof_pos": dof_target_pos_buffer.cpu(),
+        },
+        data_dir / "chirp_data.pt",
+    )
 
     import matplotlib.pyplot as plt
 
     for i in range(len(joint_ids)):
         plt.figure()
         plt.plot(t.cpu().numpy(), dof_pos_buffer[:, i].cpu().numpy(), label=f"{joint_order[i]} pos")
-        plt.plot(t.cpu().numpy(), dof_target_pos_buffer[:, i].cpu().numpy(), label=f"{joint_order[i]} target", linestyle='dashed')
+        plt.plot(
+            t.cpu().numpy(),
+            dof_target_pos_buffer[:, i].cpu().numpy(),
+            label=f"{joint_order[i]} target",
+            linestyle="dashed",
+        )
         plt.title(f"Joint {joint_order[i]} Trajectory")
         plt.xlabel("Time [s]")
         plt.ylabel("Joint position [rad]")
@@ -257,6 +274,7 @@ def main(argv: list[str] | None = None):
         plt.legend()
         plt.tight_layout()
         plt.show()
+
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     """Parse the command line of a checkpoint-free agent and hand the remainder to Hydra."""
@@ -269,8 +287,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--max_steps", type=int, default=None, help="Number of environment steps to run. Runs unbounded when omitted."
     )
-    parser.add_argument("--min_frequency", type=float, default=0.1, help="Minimum frequency for the chirp signal in Hz.")
-    parser.add_argument("--max_frequency", type=float, default=10.0, help="Maximum frequency for the chirp signal in Hz.")
+    parser.add_argument(
+        "--min_frequency", type=float, default=0.1, help="Minimum frequency for the chirp signal in Hz."
+    )
+    parser.add_argument(
+        "--max_frequency", type=float, default=10.0, help="Maximum frequency for the chirp signal in Hz."
+    )
     parser.add_argument("--duration", type=float, default=20.0, help="Duration of the chirp signal in seconds.")
 
     add_video_args(parser, action="the diffdrive agent run")
@@ -281,6 +303,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     enable_cameras_for_video(args_cli)
     sys.argv = [sys.argv[0]] + hydra_args
     return args_cli
+
 
 if __name__ == "__main__":
     # run the main function

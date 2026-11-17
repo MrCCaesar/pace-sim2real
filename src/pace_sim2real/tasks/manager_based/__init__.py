@@ -8,7 +8,12 @@ gym.register(
     id="Isaac-Pace-Anymal-D-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.pace.anymal_pace_env_cfg:AnymalDPaceEnvCfg"
-    },
+    kwargs={"env_cfg_entry_point": f"{__name__}.pace.anymal_pace_env_cfg:AnymalDPaceEnvCfg"},
+)
+
+gym.register(
+    id="Isaac-Pace-Sevnce-X5-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.pace.sevnce_pace_env_cfg:SevnceX5PaceEnvCfg"},
 )

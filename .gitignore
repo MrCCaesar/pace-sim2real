@@ -73,3 +73,9 @@ tests/
 
 # PACE specific
 **/data/*
+
+# VS Code generated databases and caches (keep editor configuration)
+.vscode/browse.vc.db*
+.vscode/*.VC.db*
+.vscode/ipch/
+.vscode/.cache/

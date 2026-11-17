@@ -1,0 +1,116 @@
+{
+  "headless": {
+    "command": [
+      "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+      "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection_mujoco.py",
+      "--config",
+      "/tmp/pace-cr1-verify/config.toml",
+      "--duration",
+      ".1",
+      "--no-visualize"
+    ],
+    "returncode": 0,
+    "stdout": "Saved 40 samples to /tmp/pace-cr1-verify/headless/data/x5_sim/chirp_data.pt\n",
+    "stderr": ""
+  },
+  "viewer": {
+    "command": [
+      "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+      "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection_mujoco.py",
+      "--config",
+      "/tmp/pace-cr1-verify/config.toml",
+      "--duration",
+      ".1"
+    ],
+    "returncode": 0,
+    "stdout": "Saved 40 samples to /tmp/pace-cr1-verify/viewer/data/x5_sim/chirp_data.pt\n",
+    "stderr": "",
+    "equal_to_headless": {
+      "time": true,
+      "dof_pos": true,
+      "des_dof_pos": true,
+      "dof_vel": true,
+      "des_dof_vel": true
+    }
+  },
+  "override": {
+    "command": [
+      "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+      "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection_mujoco.py",
+      "--config",
+      "/tmp/pace-cr1-verify/config.toml",
+      "--duration",
+      ".1",
+      "--no-visualize"
+    ],
+    "returncode": 0,
+    "stdout": "Saved 40 samples to /tmp/pace-cr1-verify/override/data/x5_sim/chirp_data.pt\n",
+    "stderr": "",
+    "equal_to_headless": {
+      "time": true,
+      "dof_pos": true,
+      "des_dof_pos": true,
+      "dof_vel": true,
+      "des_dof_vel": true
+    }
+  },
+  "shapes": {
+    "time": [
+      40
+    ],
+    "dof_pos": [
+      40,
+      12
+    ],
+    "des_dof_pos": [
+      40,
+      12
+    ],
+    "dof_vel": [
+      40,
+      4
+    ],
+    "des_dof_vel": [
+      40,
+      4
+    ]
+  },
+  "failed_viewer": {
+    "command": [
+      "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+      "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection_mujoco.py",
+      "--config",
+      "/tmp/pace-cr1-verify/config.toml",
+      "--duration",
+      ".1",
+      "--visualize"
+    ],
+    "returncode": 1,
+    "stdout": "",
+    "stderr": "/home/sevnce-mr/pace-sim2real/.venv/lib/python3.12/site-packages/glfw/__init__.py:917: GLFWError: (65550) b'X11: Failed to open display invalid-display-cr1-verify'\n  warnings.warn(message, GLFWError)\nERROR: could not initialize GLFW\n\nViewer cleanup: Viewer cleanup failed (exit code 1)\nCollection failed: Viewer exited unexpectedly (code 1)\n",
+    "sha256_before": "6e14a39e861e43c1bf42a2cb62d54b7eb897e36c11597f033c2e315584e45d9e",
+    "sha256_after": "6e14a39e861e43c1bf42a2cb62d54b7eb897e36c11597f033c2e315584e45d9e",
+    "no_temporary_output": true
+  },
+  "commit": "b41995bcb6b8d7b0776670d0dfa6fd12e819b17e",
+  "stage": "CR1 Verify",
+  "pytest": {
+    "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q",
+    "passed": 70,
+    "seconds": 13.82,
+    "warnings": 0,
+    "skipped": 0
+  },
+  "pyright": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "ruff": "passed",
+  "model_sha256": "370a5b9f1e83ca6a28baf635c497df7a4a6f5517d4bc14420c689e44a27d2249",
+  "manual_gui": "pending user confirmation",
+  "resources": {
+    "available_ram_mib": 20054,
+    "free_gpu_mib": 22720,
+    "total_gpu_mib": 24564
+  }
+}

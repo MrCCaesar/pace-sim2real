@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import os
+import warnings
+from datetime import datetime
+
 import cmaes
 import torch
 from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
-from datetime import datetime
-import os
 
 
 class CMAESOptimizer:
@@ -106,9 +108,18 @@ class CMAESOptimizer:
                 or torch.any(ratio_bounds[:, 0] > ratio_bounds[:, 1])
             ):
                 raise ValueError(
-                    f"Dynamic to static friction ratio bounds must satisfy 0 <= lower <= upper <= 1, got {ratio_bounds.tolist()}."
+                    "Dynamic to static friction ratio bounds must satisfy 0 <= lower <= upper <= 1, "
+                    f"got {ratio_bounds.tolist()}."
                 )
-
+            if not torch.equal(self.sim_params[:, self.friction_idx], self.dynamic_friction()):
+                warnings.warn(
+                    "Newton does not support separate static/dynamic joint friction. "
+                    "Using friction as the dry-friction effort and ignoring dynamic_friction; "
+                    "this is not equivalent to the PhysX friction model. "
+                    "Support for this effort depends on the selected Newton solver.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         self._reset_population()
         print("CMA-ES optimizer initialized.")
         print("Current iteration: ", self.iteration_counter)
@@ -171,43 +182,29 @@ class CMAESOptimizer:
             armature=self.sim_params[:, self.armature_idx], joint_ids=joint_ids, env_ids=env_ids
         )
 
-        if "isaaclab_newton" in physics_cfg_modules:
-            # Newton exposes one dry-friction effort (MJWarp: dof_frictionloss), not two coefficients.
-            if not torch.equal(friction, dynamic_friction):
-                warnings.warn(
-                    "Newton does not support separate static/dynamic joint friction. "
-                    "Using friction as the dry-friction effort and ignoring dynamic_friction; "
-                    "this is not equivalent to the PhysX friction model. "
-                    "Support for this effort depends on the selected Newton solver.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-            articulation.write_joint_friction_coefficient_to_sim_index(
-                joint_friction_coeff=self.sim_params[:, self.friction_idx],
-                joint_viscous_friction_coeff=self.sim_params[:, self.damping_idx],
-                joint_ids=joint_ids,
-                env_ids=env_ids,
-            )
-        else:
-            articulation.write_joint_friction_coefficient_to_sim_index(
-                joint_friction_coeff=self.sim_params[:, self.friction_idx],
-                joint_dynamic_friction_coeff=self.dynamic_friction(),
-                joint_viscous_friction_coeff=self.sim_params[:, self.damping_idx],
-                joint_ids=joint_ids,
-                env_ids=env_ids,
-            )
+        articulation.write_joint_friction_coefficient_to_sim_index(
+            joint_friction_coeff=self.sim_params[:, self.friction_idx],
+            joint_dynamic_friction_coeff=self.dynamic_friction(),
+            joint_viscous_friction_coeff=self.sim_params[:, self.damping_idx],
+            joint_ids=joint_ids,
+            env_ids=env_ids,
+        )
 
-        
         articulation.write_joint_position_to_sim(
             initial_position + self.sim_params[:, self.bias_idx], joint_ids=joint_ids
         )
         articulation.write_joint_velocity_to_sim(torch.zeros_like(initial_position), joint_ids=joint_ids)
-        for drive_type in articulation.actuators.keys():
+        for drive_type in articulation.actuators:
             drive_indices = articulation.actuators[drive_type].joint_indices
             if isinstance(drive_indices, slice):
-                all_idx = torch.arange(joint_ids.shape[0], device=joint_ids.device)
+                all_idx = torch.arange(articulation.num_joints, device=joint_ids.device)
                 drive_indices = all_idx[drive_indices]
+            else:
+                drive_indices = torch.as_tensor(drive_indices, dtype=torch.long, device=joint_ids.device)
+
             comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
+            if not torch.all(comparison_matrix.sum(dim=0) == 1):
+                raise ValueError(f"Each joint in actuator {drive_type!r} must occur exactly once in joint_order.")
             drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
             articulation.actuators[drive_type].update_encoder_bias(
                 self.sim_params[:, self.bias_idx][:, drive_joint_idx]

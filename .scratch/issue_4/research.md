@@ -113,3 +113,108 @@ Result: child DISPLAY was set to invalid-display-cr1; parent environment unchang
 Independent direction signs fit the existing mixed-channel contract, provided signed leg centers also initialize position and command history. Separate viewer-owned state in a child process is feasible for observation-only collection and startup-failure containment in this environment. Recommend this approach for Specify, subject to explicit architecture approval. It adds lifecycle/state-transfer complexity and duplicates model memory.
 
 Remaining Specify decisions: direction keys/defaults and backward compatibility; viewer switch/CLI interaction with plot; snapshot fields and rendering cadence; approximate-real-time pacing; startup timeout; distinguish normal window close from later viewer failure; cleanup/error/output contracts. A minimal rendering snapshot versus full integration-state transfer remains a design choice; the probe does not mandate either. Signed trajectories still require user-owned physical acceptance. No implementation, full sweep, production regression suite or manual GUI acceptance has been performed for CR1. Next stage: Specify only after explicit user approval.
+
+
+## CR2 — Research / In progress
+
+Authorization: user explicitly requested “进入research” after confirming Explore Q1–Q10. Investigation below is read-only; no simulator import, simulation, optimization trial or production edit was performed. Existing user changes must be re-read before implementation. CR1 software verification remains historical evidence for its committed version, not for later user edits.
+
+### Versions and primary evidence
+
+Installed Isaac Lab checkout: /home/sevnce-mr/IsaacLab, VERSION 3.0.0, commit ae63302486bb92fc865f1fd8449b91a53728184c (clean at investigation). Installed metadata: cmaes 0.13.1; torch 2.11.0+cu130. Local source is authoritative for these installed APIs. The Isaac Lab commit-specific web URL could not be fetched; it is not substituted with a different release. [cmaes v0.13.1 upstream source](https://github.com/CyberAgentAILab/cmaes/blob/v0.13.1/cmaes/_cma.py) corroborates the installed optimizer source.
+
+### Confirmed facts and feasibility
+
+1. **Canonical channel order requires explicit mapping.** ActionManager slices actions in configured term order (installed source/isaaclab/isaaclab/managers/action_manager.py:423). Joint action terms resolve their own ordered joint IDs (envs/mdp/actions/joint_actions.py:64,198,251); preserve_order groups by regex-key order (utils/string.py:257–291). Current X5 hip/thigh/calf regexes therefore do not yield its per-leg leg_order. Explicit ordered action names or a validated name-to-action-column mapping are feasible alternatives; articulation IDs remain separate measurement/state-write indices.
+2. **Moving wheels are supported by the APIs.** base_articulation.py:997,1051 accepts selected positions/velocities shaped [num_selected_envs,num_selected_joints], with cache invalidation. Current optimizer zeroes velocities and must be adapted for CR2-R7. Dataset wheel angles and initial leg velocities are absent; no claim that wheel-angle/contact effects are irrelevant is justified. Initial-state assumptions remain a design/physical question.
+3. **Sample timing differs today.** ManagerBasedEnv.step_dt is physics dt times decimation (manager_based_env.py:295–300); env.step advances that interval (:581–598). Current collector counts physics steps but uses endpoint-inclusive linspace, reads measured positions before stepping and retrieves actuator targets afterward. fit advances one env.step per row while ignoring actual dataset intervals. Building new data from actual sampling intervals and pairing pre-step state with issued commands is feasible. Legacy linspace datasets require an explicit interpretation or conversion; rejecting them all conflicts with compatibility, while silently treating their timestamps as physical time is incorrect.
+4. **Shared command delay already supports velocity commands.** PaceDCMotor uses position/velocity/effort DelayBuffers in command mode; effort mode delays torque (utils/pace_actuator.py:53–60,74–78,105–115). Installed DelayBuffer.compute returns oldest available data after reset until enough history exists (utils/buffers/delay_buffer.py:195–221). Candidate delay currently truncates to integer (cma_es.py:210). Actual delay cadence under backend-owned substeps/decimation needs bounded runtime evidence.
+5. **Bias placement is not equivalent across collectors.** PaceDCMotor.compute supplies joint_pos minus encoder_bias to feedback; collection/scoring also subtract bias and initialization adds it (pace_actuator.py:86–94; cma_es.py:129,191–210). Its prose says adding but code subtracts. Native collection applies bias only to recorded positions. This changes closed-loop physics, not just tensor naming. Supporting both dataset sources requires a declared compatible bias model or explicit source-specific interpretation; no silent change to feedback is approved. Wheel bias is excluded by CR2-R4 regardless.
+6. **Parameter count follows confirmed physical scope.** For J=L+W channels, three mechanical parameters per joint plus L leg biases and one delay gives 3J+L+1, before optional friction ratios. X5 yields 61; pure-leg ANYmal remains 49. This is dimensional accounting, not a chosen ordering/default. Existing optimizer assumes 4J+1; X5 user bounds allocate49 but access64, and friction helpers double-count wheels. Existing ANYmal sets joint_order only; compatibility needs normalization/migration while retaining leg_order/wheel_order.
+7. **Backend friction is not interchangeable.** Newton articulation.py:2039–2102 treats friction as force/torque (MJWarp dof_frictionloss); nonzero dynamic-friction arguments are warned/ignored; viscous friction has its own write. Actual solver support is conditional. PhysX behavior depends on concrete implementation/version (isaaclab_physx articulation.py:1869 and isaaclab_ov articulation.py:1949). Existing presets include Isaac Sim PhysX/OV PhysX, Newton MJWarp and Kamino; requirements cover Newton and PhysX, not an unverified promise for every solver. No optimizer dimension should be presented as identifiable if its selected backend ignores that parameter.
+8. **Existing result provenance is inconsistent.** CMA mean_NNN.pt is a distribution mean, but best_trajectory.pt stores a sampled candidate and is overwritten. plot_trajectory.py:93,119 subtracts mean bias from that candidate trajectory; selecting an older mean can still load the latest trajectory. Saving both response groups must associate parameters, trajectory and generation explicitly. The existing consumer is plot_trajectory.py; docs/usage.md and tutorials/basics.md,advanced.md also describe these artifacts. Exact versioning/legacy-read schema belongs in Specify.
+9. **Population and stopping require care.** Installed cmaes _cma.py:92–103 permits positive population sizes but computes mu=population//2; size1 gives no positive-weight parents. Source-derived safe minimum candidate for a smoke test is2, not proof of robust optimization. Existing fit default is1. Current stop rule divides score spread by minimum score; zero score needs defined handling, and small spread is not an accuracy criterion.
+
+### Approach comparisons — Proposed, not selected
+
+| Question | Alternatives | Trade-offs / recommendation |
+| --- | --- | --- |
+| Mixed residual units | Scale by measurement noise, accepted physical tolerances, or reference excitation amplitude | Noise scaling needs noise assumptions; tolerance scaling needs approved targets; amplitude scaling needs zero-excitation safeguards. Report raw rad/rad/s errors separately in every case. Do not directly add unscaled position and velocity squares. |
+| Group weighting | Per-channel sum or per-group mean plus weights | Channel sum favors larger groups; group mean removes count dominance. User has not approved a weighting policy. |
+| Legacy timestamps | Explicit legacy index-based interpretation, explicit conversion, or resampling | Source cadence/provenance is necessary; arbitrary resampling changes commands/delay and is not automatically permitted. |
+| Bias semantics | Preserve source-specific feedback models or deliberately harmonize future collection | Preserving requires explicit provenance/config; harmonizing changes existing physics and needs approval plus legacy treatment. |
+| Output association | Save matched candidate/trajectory or evaluate/store the chosen mean with its own trajectory | Either can give truthful provenance; silently pairing current mean and sampled trajectory cannot. |
+
+### Current workspace conflict — clarification pending
+
+Since CR1 verification, user changed native desired from centers + sin(phase)*amplitudes*directions to (centers + sin(phase))*amplitudes*directions, while centers already includes directions and initializes state/history. This changes center scaling/sign behavior and can create a first-command/initial-state mismatch. An asynchronous clarification asks whether to retain approved physical-center semantics, intentionally redefine normalized centers, or exclude a temporary experiment. No code was reverted or tested. CR1 verified results must not be attributed to this edited formula.
+
+### Inferences and remaining risks
+
+Response matching does not prove unique parameter recovery. Armature needs acceleration excitation; damping/friction can correlate; feedback can mask mechanical changes; delay introduces discrete plateaus; contacts and symmetric excitation couple responses. Missing wheel angle or initial leg velocity can matter. Both-backend APIs exist, but runtime availability, model loading, property propagation and actuator cadence remain unverified in CR2.
+
+### Proposed bounded experiments — not yet approved or run
+
+E1: CPU-only isolated temporary probe using installed torch/cmaes and synthetic data; check pure/mixed dimensional accounting, two-candidate ask/tell and zero-score handling, group ordering/nonzero wheel-speed initialization contracts using a stub, and candidate/trajectory round-trip association. At most10 generations with2 candidates; 30 s wall limit; no simulator/GPU. This checks feasibility, not parameter recovery on a robot.
+
+E2: sequential headless installed-backend probes with2 environments, a minimal position joint plus velocity joint, at most40 steps / 0.1 s simulated time per backend, at most120 s wall time each including initialization. Check resolved action mapping, nonzero initial wheel speed, pre-step samples/issued commands, shared command-delay cadence and selected mechanical-property writes. Check RAM/VRAM first and stop on resource pressure; no concurrent simulators, no full training/optimization. Use temporary isolated configuration to avoid executing the unfinished user X5 module, with no production edits. Backend initialization failure is reported, not silently substituted with another backend.
+
+Both probes write only under /tmp; exact outcomes will be recorded here if approved. Approval of Research alone does not authorize them. Architecture, loss weights, parameter/default layouts and output schemas remain for Specify. Bias/legacy-time and trajectory-semantic conflicts must be resolved explicitly before dependent design decisions.
+
+
+### Trajectory conflict resolved by user clarification
+
+User explicitly selects normalized centers with (centers + sin)*amplitudes*directions and confirms removal of the earlier centers*directions preprocessing. Read-back confirms this in the current native source. The former clarification question is resolved; preserve this formula. Native qpos/ctrl/history still initialize to raw centers, so first-target consistency remains future work. Earlier CR1 tests/results refer to its committed physical-center version only and must not be claimed for the amended behavior.
+
+### Experiment authorization
+
+User said “允许两个临时实验”. E1/E2 are approved within the above limits. No production edits are authorized by this approval. CPU probe and sequential backend probes reside in /tmp/pace-cr2-probes.
+
+
+### CR2 approved experiment results — 2026-11-17
+
+User approval: “允许两个临时实验”. This supersedes earlier not-approved/not-run descriptions. Probe sources/logs/models are under /tmp/pace-cr2-probes; durable outputs and source hashes are in cr2-research-results.json. Only temporary probes and issue documentation were changed; no production code or environment dependency installation.
+
+Resource preflight: available RAM19,880 MiB; GPU22,672/24,564 MiB free. Backend runner monitored available RAM against a4 GiB floor, enforced120 s per runtime and killed the process group on limit violations. No resource limit was reached. Simulators were sequential; no training or full X5 sweep.
+
+**E1 CPU command:** `timeout --kill-after=2s 30s .venv/bin/python /tmp/pace-cr2-probes/cpu_probe.py` — exit0, CUDA was not initialized.
+
+- Current optimizer accepted pure-position49 bounds with a2-candidate population. It rejected the confirmed mixed-scope61 bounds with “Expected65 ... got61”, experimentally confirming the layout gap rather than silently adding unused wheel biases.
+- With zero candidate scores, current relative score-spread was nonfinite and finished() returned false before max iterations; zero-score stopping requires explicit handling.
+- Installed cmaes completed8 generations of2 candidates on a two-coefficient synthetic position/velocity response objective, with finite scores. Best observed score0.1164526908 at generation2; the final generation's best was0.1631592606. This is not evidence of monotonic convergence or physical parameter recovery. Diagnostic scales in this toy are not approved production loss weights.
+- cmaes emitted divide-by-zero RuntimeWarnings at _cma.py:117,119 with this tiny population. Finite output does not make population2 a recommended production optimizer setting; later design/validation must distinguish minimum-resource smoke tests from robust optimization.
+- Stub name-based packing preserved shuffled joint order and nonzero wheel velocities1.5/-0.75 are tested in E2; the CPU stub itself used3/-2 rad/s. Candidate parameters, generation and both response arrays survived a paired torch round-trip. These checks demonstrate temporary-probe feasibility, not implemented project support.
+
+**E2 commands:** `python3 /tmp/pace-cr2-probes/run_backend.py newton`, then `python3 /tmp/pace-cr2-probes/run_backend.py physx`. Each invokes the installed .venv Python and backend_probe.py with --device cuda:0 and --visualizer none. The installed launcher rejects --headless; an initial argument-only attempt exited2 without launching physics and was corrected to its documented no-visualizer selection. No production CLI was modified.
+
+- Newton run exited0 in13.004 s. Installed NewtonCfg solver_cfg=None selects MJWarpSolverCfg (newton_manager_cfg.py:166). Two environments, one position-controlled revolute joint and one velocity-controlled revolute joint each, zero gravity/no contacts, dt0.0025 s,40 steps. Python PaceDCMotor loaded in isolation; CUDA graphs disabled; use_newton_actuators=False.
+- Initial wheel speeds1.5 and-0.75 rad/s were written/read correctly. Armature and dry-friction property readbacks matched; viscous friction write was exercised but not independently read back or physically calibrated.
+- Both issued commands changed at index4; the actual PaceDCMotor delayed-command hook observed their changes at index6, confirming shared lag2 for this one-compute-per-step setup. Exactly40 actuator compute calls; positions/velocities remained finite.
+- The probe used direct articulation targets, so ActionManager permutation/mapping runtime behavior remains untested. It establishes neither X5 model validity nor identical physics across backends. Deprecation warnings for legacy target setters and a Newton shape-color warning were recorded; Specify should use current target_command APIs.
+- Explicit Kit PhysX run exited1 in3.001 s before simulation: Isaac Sim was not installed/available. Follow-up metadata checks found neither isaacsim nor ovphysx nor physx-usd-schemas installed. No OV runtime was substituted and no dependencies were installed. **PhysX execution remains unverified due to missing runtime**, although its source/API path was inspected.
+
+### Research conclusions and remaining decisions
+
+The mixed control/measurement and shared-delay mechanisms are feasible on installed Newton/MJWarp in a minimal model. The existing optimizer/data/results path still requires the documented changes; the CPU probe confirms61-versus65 and zero-score issues. PhysX support can be designed against installed source but cannot be runtime-accepted in this environment until its runtime is provided. Two-backend equivalence is neither required nor demonstrated.
+
+Confirmed user trajectory amendment resolves the formula question: normalized centers. Current native startup positions/history still need alignment with the resulting first targets; accepted amendment recorded in ADR0004. Prior CR1 physical-center evidence is not transferable to the edited formula.
+
+Open design/physics decisions for Specify: source-dependent bias behavior; legacy timestamp interpretation; absent wheel-angle/leg-initial-velocity assumptions; mixed residual scaling/weighting; parameter layout and population/stopping policy; matched parameter/trajectory result provenance and compatibility. These must not be silently settled by experimental toy choices. No further runtime experiment is currently proposed without a concrete need. Research evidence is consolidated; next stage Specify requires explicit user approval.
+
+
+## CR2 installed Isaac Sim retest — 2026-11-17 (Confirmed evidence)
+
+This entry supersedes the earlier missing-Isaac-Sim execution limitation, retaining that attempt as history. User installed Isaac Sim 6.2.0.0 and explicitly requested a rerun. The user explicitly accepted the EULA and authorized `OMNI_KIT_ACCEPT_EULA=YES` for this test only; no persistent environment setting or dependency change was made.
+
+The first accepted-EULA run exited127 in5.002s with mixed USD native-library errors. The probe had imported `pxr` and authored USD before Kit started. Installed Isaac Lab launcher documentation requires USD runtime imports after Kit initialization. Moving runtime imports/asset creation inside `launch_simulation` in the temporary probe resolved the failure without library-path overrides.
+
+Commands (sequential, resource preflight:13869MiB available RAM,22553MiB free GPU):
+
+```bash
+OMNI_KIT_ACCEPT_EULA=YES python3 /tmp/pace-cr2-probes/run_backend.py physx
+OMNI_KIT_ACCEPT_EULA=YES python3 /tmp/pace-cr2-probes/run_backend.py newton
+```
+
+Both returned0: PhysX9.003s; Newton8.003s. Each used2 environments,40 steps,dt0.0025s, headless, a120s watchdog and4GiB RAM floor. Assertions passed for nonzero initial wheel velocities, armature/static-friction readback, shared2-step leg/wheel command delay, and finite position/velocity samples. PhysX emitted protobuf/interface-version warnings; target setters emitted deprecation warnings; Newton emitted its shape-color workaround warning. No resource safety stop occurred.
+
+Durable run records, samples and probe hashes: `cr2-research-results.json` → `installed_isaacsim_retest`. These are isolated articulation experiments, not complete X5 collection/fit tests. ActionManager mapping, parameter recovery and backend physical equivalence remain unverified. Research recommendations still require Specify approval.

@@ -114,3 +114,56 @@ Fixed point explicitly approved by user: 3a02f00. Reviewed cumulative committed 
 - Spec: initial one P2 cancellation cleanup gap and one timing-evidence gap resolved; no remaining material deviations. Explicit IPC release also has a regression test.
 
 Reviewers did not execute tests; runtime evidence above was executed by the implementing agent. Manual camera/window-manager close and formal Verify remain pending, explicitly distinct from implementation findings. No push or GitHub issue-state changes were performed.
+
+
+## CR1 formal Verify — 2026-11-17
+
+Authorization: user explicitly requested “进入 Verify”. Target HEAD b41995b (implementation 2d1f78d plus cleanup fixes 3076912). User-owned unstaged edits remain outside this task; verification uses the current local model and preserves those inputs. Issue #4 title/body/comments re-read. No production code changes, commits, pushes or tracker writes performed in this stage.
+
+### Executed checks
+
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q`: **70 passed in 13.82 s**, no skips or warnings.
+- `uv tool run pyright --pythonpath .venv/bin/python scripts/pace/mujoco_collection.py scripts/pace/mujoco_viewer.py scripts/pace/data_collection_mujoco.py tests/test_mujoco_collection.py`: **0 errors, 0 warnings**.
+- `.venv/bin/ruff check scripts/pace/mujoco_collection.py scripts/pace/mujoco_viewer.py scripts/pace/data_collection_mujoco.py tests/test_mujoco_collection.py`: **All checks passed**.
+- `.venv/bin/python /tmp/pace-cr1-verify/verify_cli.py`: **all independent CLI assertions passed**. Exact spawned commands/stdout/stderr and comparisons are retained in cr1-verify-results.json. The harness/config/datasets live under /tmp/pace-cr1-verify, outside production output.
+
+Resource preflight: available RAM 20,054 MiB; GPU free 22,720 / 24,564 MiB. CLI cases ran sequentially, one model at a time, 0.1 simulation seconds each with a 20-second watchdog and isolated output roots. No Isaac Lab run or full-duration sweep.
+
+### Independent CLI cases
+
+1. Explicit --no-visualize overrides a TOML visualize=true setting: exited 0, saved 40 samples.
+2. TOML visualize=true without CLI override: real MuJoCo window started, synchronized and shut down; exited 0 and saved 40 samples. All five tensors exactly equal to case 1 via torch.equal.
+3. --no-visualize with invalid DISPLAY: exited 0 and saved all 40 samples, exactly equal to case 1. Confirms the disabled path does not require a functioning display.
+4. --visualize with invalid DISPLAY: exited 1. A pre-existing valid dataset's SHA-256 was unchanged, and no temporary output remained in its directory. Native error diagnostics captured. No claim that failure runs produce a dataset.
+
+Mixed signs were applied to selected hip and wheel channels in the temporary config. These short-run comparisons demonstrate data/physics isolation, not full-range mirrored trajectory safety. Saved shapes: time [40], leg measured/desired [40,12], wheel measured/desired [40,4].
+
+### Acceptance reconciliation
+
+| Criterion | Result | Evidence / boundary |
+| --- | --- | --- |
+| CR1-A1 direction formulas and signed initialization/history | Passed | independent_directions behavior test, native startup response/history assertions and mixed-sign CLI smoke |
+| CR1-A2 validation and compatibility | Passed | invalid values/types/lengths, legacy TOML/Python callers, all-positive equivalence, CLI override/conflict tests |
+| CR1-A3 observation isolation / disabled path | Passed | external-GUI mutation test, real-viewer exact five-tensor equality, invalid-display headless override |
+| CR1-A4 close/failure/cancel and output preservation | Automated checks passed | normal/immediate-close events, real startup failure, controlled crash/timeout/escalation, SIGINT during escalation, retained-traceback IPC release; human close-button acceptance still pending |
+| CR1-A5 bounded rendering and GUI evidence | Automated/real-launch portions passed; manual portion pending | 30 Hz publication observations, slow-display skipped-frame evidence with 160 samples, controlled-clock pacing, real X5 launch/sync/shutdown; no human camera/close-button observation yet |
+| Baseline A1–A8 regression | Passed within existing software boundary | complete 70-test suite; physical contacts/trajectory suitability remain user-owned |
+
+### Remaining acceptance and limitations
+
+Manual GUI confirmation was requested during this stage: camera rotation/zoom and clicking the window close button while collection continues to a complete save. No human result has yet been supplied; programmatic/stub lifecycle tests are not substituted for that requirement. No desktop automation tool was available in this session. Software verification is complete, but **full CR1 acceptance remains pending this manual check**.
+
+The pre-existing missing license-header template and isolated pytest-plugin environment remain as documented above; no unrelated tooling repairs were introduced. No new code-review findings arose from Verify. Formal Verify evidence does not certify collisions, physical model fidelity or a full 20-second sweep.
+
+
+## User-requested WIP checkpoint checks — 2026-11-17
+
+This is a comparison baseline during CR2 Research, not CR2 Verify acceptance. Current user-owned work was preserved and normalized after the requested retest.
+
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q`: **67 passed,3 failed in14.28s**. Failing tests: `test_collect_preserves_sensor_time_and_native_delay_despite_reordered_model`, `test_independent_directions_mirror_centers_and_preserve_native_measurements`, `test_direction_config_and_legacy_defaults`. These expose the changed normalized-center formula/initialization and configuration expectations; no assertions were weakened to obtain a pass.
+- Sequential installed-runtime probes: PhysX passed9.003s, Newton passed8.003s,2env/40steps each. Exact commands and limits in research.md; results in cr2-research-results.json. Full collection/optimization is not validated.
+- AST parsing of14 modified/new Python files passed. Removed a dangling `from ` line from the user's new task file, unused/duplicate imports and trailing whitespace; applied repository Black/isort formatting. No new mixed-joint behavior implemented.
+- `SKIP=insert-license .venv/bin/pre-commit run --files <14 changed/new Python files> config/x5_collection.toml .gitignore`: Black/isort and applicable hygiene checks passed. Flake8 remains failed on undefined `trajectory` in data_collection.py. Codespell flags the literal joint pattern `.*HAA`; preserve that identifier. License hook skipped because `.github/LICENSE_HEADER.txt` is absent (existing repository limitation).
+- `git diff --check` passed after formatting. `git check-ignore` confirmed `.vscode/browse.vc.db`, its SHM/WAL files and lock are ignored. Editor configuration remains trackable.
+
+Known WIP limitations also include unfinished task/assets wiring and mixed-group parameter layout described in Research. A local checkpoint commit is explicitly authorized by the user; it must not be described as a passing implementation. No push or GitHub state change.

@@ -213,7 +213,7 @@ def collect(config: CollectionConfig) -> CollectionData:
         sensor_ids.append(int(sensors[0]))
     data = mujoco.MjData(model)
     directions = np.array((*config.position_directions, *config.velocity_directions))
-    centers = np.array((*config.position_centers, 0.0, 0.0, 0.0, 0.0)) * directions
+    centers = np.array((*config.position_centers, 0.0, 0.0, 0.0, 0.0))
     amplitudes = np.array((*config.position_amplitudes, *config.velocity_amplitudes))
     ctrl_ids = model.actuator_ctrladr[actuator_ids]
     data.qpos[model.jnt_qposadr[joint_ids]] = centers
@@ -232,7 +232,7 @@ def collect(config: CollectionConfig) -> CollectionData:
             + (config.max_frequency - config.min_frequency) * time**2 / (2 * config.duration)
         )
     )
-    desired = centers + np.sin(phase[:, None]) * amplitudes * directions
+    desired = (centers + np.sin(phase[:, None])) * amplitudes * directions
     measured = np.empty((steps, 16), dtype=np.float64)
     rng = np.random.default_rng(config.seed)
     noise = model.sensor_noise[sensor_ids]
