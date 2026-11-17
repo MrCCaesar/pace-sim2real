@@ -404,5 +404,50 @@
       "standards": "No material findings",
       "spec": "No material defects; performance evidence limited to disclosed adapted baseline and tested workload"
     }
+  },
+  "kitless_cli_fix": {
+    "scope": "Project only; IsaacLab source untouched; existing user config edits preserved",
+    "full_suite": "92 passed, 2 existing cmaes warnings in 23.73s",
+    "typecheck": "0 errors, 0 warnings",
+    "regression": "Parser test fails pre-fix by forbidden isaacsim import; passes post-fix for both scripts and Newton/PhysX presets, device and Kit arguments",
+    "help": "env -u OMNI_KIT_ACCEPT_EULA uv run python scripts/pace/data_collection.py --help: exit0",
+    "runs": {
+      "newton_without_eula": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection.py",
+          "--task",
+          "Isaac-Pace-Anymal-D-v0",
+          "--num_envs",
+          "2",
+          "--duration",
+          ".01",
+          "--visualizer",
+          "none"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 17.006,
+        "stop_reason": null
+      },
+      "explicit_physx_test_eula": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection.py",
+          "--task",
+          "Isaac-Pace-Anymal-D-v0",
+          "--num_envs",
+          "2",
+          "--duration",
+          ".01",
+          "--visualizer",
+          "none",
+          "physics=isaacsim_physx"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 28.007,
+        "stop_reason": null
+      }
+    },
+    "resources": "2 envs, 4 steps each, sequential, 120s and 4GiB RAM watchdog; preflight RAM16164MiB GPU22674MiB"
   }
 }

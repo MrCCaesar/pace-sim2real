@@ -221,3 +221,18 @@ Commands: `.venv/bin/python /tmp/pace-original-benchmark-runner.py newton perf-o
 Real backend smoke commands (with process-only EULA acceptance, OMP/MKL threads=2) use `tests/test_mixed_collection_fit.py <backend> smoke <output>`: Newton exit0/11.003 s; PhysX exit0/8.003 s; both 2 environments/40 steps and zero truth RMSE for both groups. Runtime fixture now uses the explicitly supported identity action configuration, preserving reordered action columns. Earlier nonidentity compensation tests are superseded by the user amendment.
 
 **Review:** independent Standards and Spec reviewers found no remaining material issue. Spec reviewer inspected benchmark source/results and confirmed the limited performance claim above. Formal Verify remains a separate, user-authorized stage.
+
+### Project-only Kitless CLI fix
+
+User explicitly prohibited Isaac Lab source changes. The aborted external edit left that checkout clean on main; no external source was changed. Project collection and fit now use pure argparse registration in the existing shared helper, then existing preset resolution and launch_simulation. The fixed boundary is CLI parsing, not EULA acceptance; no production acceptance variable is injected.
+
+- Red: isolated parser test rejected the old import of isaacsim from KitLauncher. Green: both scripts parse default Newton, explicit PhysX+Kit, device and option-like Kit arguments with isaacsim imports forbidden and EULA variable removed.
+- `env -u OMNI_KIT_ACCEPT_EULA uv run python scripts/pace/data_collection.py --help`: exit0, no EULA prompt.
+- `uv run python scripts/pace/data_collection.py --task Isaac-Pace-Anymal-D-v0 --num_envs 2 --duration .01 --visualizer none`, with EULA variable explicitly absent and temporary PACE_ROOT: exit0, 17.006s, four samples; default Newton used.
+- Same short command plus `physics=isaacsim_physx`, using previously authorized process-only test EULA variable and separate temporary PACE_ROOT: exit0, 28.007s. Required Kit runtime still starts for this branch. Remote asset timeout fell back to local cache; not a startup-selection failure.
+- Sequential runs, 120s/4GiB watchdog; preflight16164MiB RAM and22674MiB GPU free. GUI behavior and full-duration physical acceptance are not claimed.
+- Full suite `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run python -m pytest -q`:92 passed,2 existing cmaes warnings,23.73s. Targeted Pyright0; applicable pre-commit hooks passed after formatting, pre-existing missing license-template skip unchanged.
+
+Existing user edits to ANYmal/X5 configuration files were neither changed nor included in this fix.
+
+Kitless fix two-axis review: Spec found no material compatibility issue; Standards found no material code issue and requested fuller helper-interface documentation. The shared-helper table now records defaults, in-place registration, return type and argparse duplicate-option behavior.

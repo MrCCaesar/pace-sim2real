@@ -659,3 +659,38 @@ for fault in (None, "nonfinite_sample", "nonfinite_final", "termination", "time_
         timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_collection_and_fit_parse_without_importing_isaac_sim():
+    import os
+    import subprocess
+
+    script = """
+import importlib.util
+import sys
+class RejectIsaacSim:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "isaacsim" or fullname.startswith("isaacsim."):
+            raise AssertionError("CLI parsing imported Isaac Sim")
+sys.meta_path.insert(0, RejectIsaacSim())
+for name in ("data_collection", "fit"):
+    spec = importlib.util.spec_from_file_location(name, f"scripts/pace/{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.load_external_tasks()
+    for extra, expected in (([], "NewtonCfg"), (["physics=isaacsim_physx", "--visualizer", "kit"], "PhysxCfg")):
+        args = module._parse_args(["--task", "Isaac-Pace-Anymal-D-v0", *extra])
+        cfg, _ = module.resolve_task_config(args.task, "")
+        assert type(cfg.sim.physics).__name__ == expected
+    args = module._parse_args(["--task", "Isaac-Pace-Anymal-D-v0", "--device", "cpu",
+                               "--kit_args", "--ext-folder=/tmp/extensions"])
+    assert args.device == "cpu" and args.device_explicit
+    assert args.kit_args == "--ext-folder=/tmp/extensions"
+assert "isaaclab_physx.app.kit_launcher" not in sys.modules
+"""
+    environment = dict(os.environ)
+    environment.pop("OMNI_KIT_ACCEPT_EULA", None)
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

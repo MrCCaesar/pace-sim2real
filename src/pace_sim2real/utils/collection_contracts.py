@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import MISSING
 from typing import TYPE_CHECKING, TypedDict
 
@@ -18,6 +19,28 @@ class ActionMapping(TypedDict):
     columns: list[int]
     num_legs: int
     num_wheels: int
+
+
+def add_runtime_args(parser: argparse.ArgumentParser) -> None:
+    """Register PACE runtime flags without importing any backend implementation.
+
+    Physics/viewer selectors remain owned by Isaac Lab's setup_preset_cli.
+    Kit-only options are inert until launch_simulation selects a Kit runtime.
+    """
+    group = parser.add_argument_group("runtime")
+    group.add_argument("--device", default=None, help="Simulation device; default comes from the task config.")
+    group.add_argument("--max_visible_envs", type=int, default=None, help="Limit the number of visible environments.")
+    group.add_argument("--deterministic", action="store_true", help="Request deterministic simulation/rendering.")
+    group.add_argument("--verbose", action="store_true", help="Enable debug logging.")
+    group.add_argument("--info", action="store_true", help="Enable info logging.")
+    kit = parser.add_argument_group("Kit runtime (used only when selected)")
+    kit.add_argument("--livestream", type=int, choices=(0, 1, 2), default=-1)
+    kit.add_argument("--xr", action="store_true")
+    kit.add_argument("--experience", default="")
+    kit.add_argument("--kit_args", default="", help="Arguments forwarded to Kit when a Kit runtime is selected.")
+    kit.add_argument("--anim_recording_enabled", action="store_true")
+    kit.add_argument("--anim_recording_start_time", type=float, default=0.0)
+    kit.add_argument("--anim_recording_stop_time", type=float, default=10.0)
 
 
 def resolve_joint_groups(cfg):

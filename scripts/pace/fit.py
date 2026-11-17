@@ -22,7 +22,8 @@ import sys
 import gymnasium as gym
 import isaaclab_tasks  # noqa: F401
 import torch
-from isaaclab.app import add_launcher_args, launch_simulation
+from isaaclab.app import launch_simulation
+from isaaclab.app.sim_launcher import fuse_kit_args
 from isaaclab.cli import load_external_tasks
 from isaaclab.utils import validate
 from isaaclab_rl.entrypoints.common import (
@@ -44,6 +45,7 @@ from typing import Any
 from pace_sim2real import CMAESOptimizer
 from pace_sim2real.utils import project_root
 from pace_sim2real.utils.collection_contracts import (
+    add_runtime_args,
     load_reference_data,
     pack_actions,
     resolve_action_mapping,
@@ -183,10 +185,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 
     add_video_args(parser, action="the diffdrive agent run")
-    add_launcher_args(parser)
+    add_runtime_args(parser)
     # let task configs select the simulation device and keep checkpoint-free agents on the kitless default path
     parser.set_defaults(device=None, visualizer=["newton_gl"])
-    args_cli, hydra_args = setup_preset_cli(parser, argv)
+    arguments = fuse_kit_args(sys.argv[1:] if argv is None else argv)
+    args_cli, hydra_args = setup_preset_cli(parser, arguments)
+    args_cli.device_explicit = args_cli.device is not None
     enable_cameras_for_video(args_cli)
     sys.argv = [sys.argv[0]] + hydra_args
     return args_cli

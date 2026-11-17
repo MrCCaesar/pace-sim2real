@@ -176,6 +176,7 @@ Add to existing CMAESOptimizerCfg: position_error_scale=1.0 rad, velocity_error_
 
 | Function | Input → output | Behavior / errors |
 | --- | --- | --- |
+| add_runtime_args(parser) | argparse.ArgumentParser → None | register options in place without backend imports; device/max_visible_envs=None, boolean flags=False, livestream=-1, experience/kit_args empty, animation times=0/10 seconds; duplicate flags raise argparse.ArgumentError |
 | resolve_joint_groups(cfg) | PaceCfg → tuple[tuple[str,...], tuple[str,...]] | normalize legacy pure-leg declaration; validate uniqueness/disjointness/combined order; ValueError on conflict |
 | load_reference_data(path, cfg, step_dt) | Path, resolved PaceCfg, float seconds → dict | safe tensor load, shape/finite/order/time/model checks; returns canonical data keys plus internal original_time and resolved declarations; FileNotFoundError/OSError for IO, ValueError for invalid contract |
 | resolve_action_mapping(env, leg_order, wheel_order) | launched environment and name sequences → mapping record | independently resolve articulation IDs and action term columns; reject missing/duplicate/type-incompatible/unknown action terms and ambiguous coverage |
@@ -223,3 +224,7 @@ CR2 interface approval: Q23 explicitly approved this final concrete section, inc
 The user explicitly removed action scale/offset/clip handling from mapping/pack_actions. This supersedes the Q18 inverse-transform portion. PACE task configs explicitly use scale=1, offset=0, clip=None and use_default_offset=False; helper does not inspect or compensate these settings. pack_actions accepts any batch size, enabling trajectory packing before collection/fit loops. Target finiteness belongs to collection preflight/reference loader.
 
 Collection uses contiguous full-state GPU buffers, gathers declared response columns after simulation and performs one completed-data transfer. Finiteness checks cover every environment, every sample and the final state before returning; automatic resets/termination still abort immediately. Buffer cost is 8*(N+1)*B*J bytes. Real timestamps remain pre-step seconds from the simulation counter.
+
+### User-authorized kitless argument registration fix
+
+`add_runtime_args(parser: argparse.ArgumentParser) -> None` in the existing shared helper registers device/logging/determinism/viewer-capacity flags and inert Kit options without importing backend implementations. Physics and visualizer selectors remain owned by installed `setup_preset_cli`; explicit device selection is marked after parsing. Both collection and fitting retain `launch_simulation`, which resolves runtime requirements after configuration selection. Isaac Lab source is explicitly out of scope and remains unchanged. No new files or backend fallback are introduced.
