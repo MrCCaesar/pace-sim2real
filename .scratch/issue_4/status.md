@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: User-authorized release/closure. Current code and user changes normalized; 94 tests, Pyright and applicable hooks pass; final two-axis review has no blockers. New task-directory collection→fit CLI roundtrip passed with default CUDA/no viewer. Commit/push and closure of parent #4 plus implemented children #5–#13 are authorized and in progress. Software evidence does not assert human GUI/physical acceptance.
+Current stage: User-authorized release/closure complete. Code commit 5ace954 pushed to origin/main; parent #4 and implemented children #5–#13 closed with completed reason and individually read back as CLOSED. 94 tests, Pyright and applicable hooks pass; final review clear. Human GUI/physical acceptance is not asserted. Closure receipt synchronized in cr2-implement-results.json.
 
 ## Delivery
 
@@ -99,3 +99,5 @@ Fitting throughput completion: CPU timestamps, reusable full-state buffers, batc
 User requested fit CLI defaults cuda and no visualization. Updated fit.py to emit visualizer=none by default and apply the selected device to env_cfg.sim.device before launch. Parser checks confirmed defaults and explicit --device cpu --visualizer newton_gl overrides, with EULA variable absent; git diff --check passed. Existing user fit data-path edit preserved; no simulation or commit for this small default change.
 
 User explicitly requested “将当前修改规范化提交，然后推送到远程并关闭对应的issue”. This supersedes earlier no-push/no-tracker-write status. Included current user trajectory, directory and task-config edits; updated docs and fixed static typing/formatting without changing physical settings. Final checks recorded in verification.md. Issue closeout follows explicit user instruction and does not invent unrecorded manual acceptance.
+
+Release completed: origin/main accepted fast-forward54b403a→5ace954. GitHub #5–#13 then #4 were closed and each state read back as CLOSED. Other Issues untouched. Publishing this final receipt completes the handoff.

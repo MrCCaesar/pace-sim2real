@@ -638,6 +638,69 @@
         "stop_reason": null
       }
     },
-    "scope": "Headless software acceptance only; no assertion of manual camera/window-manager close or physical-model validity"
+    "scope": "Headless software acceptance only; no assertion of manual camera/window-manager close or physical-model validity",
+    "published_code_commit": "5ace9545489af0dd57610ef88b7f915101e797f9",
+    "closed_issues": [
+      {
+        "closedAt": "2026-11-17T11:45:17Z",
+        "number": 5,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/5"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:23Z",
+        "number": 6,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/6"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:27Z",
+        "number": 7,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/7"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:32Z",
+        "number": 8,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/8"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:37Z",
+        "number": 9,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/9"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:42Z",
+        "number": 10,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/10"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:46Z",
+        "number": 11,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/11"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:52Z",
+        "number": 12,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/12"
+      },
+      {
+        "closedAt": "2026-11-17T11:45:59Z",
+        "number": 13,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/13"
+      },
+      {
+        "closedAt": "2026-11-17T11:46:04Z",
+        "number": 4,
+        "state": "CLOSED",
+        "url": "https://github.com/MrCCaesar/pace-sim2real/issues/4"
+      }
+    ]
   }
 }
