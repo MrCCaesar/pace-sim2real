@@ -1,0 +1,67 @@
+{
+  "commit": "87da0960473cc300fd54e6cbeb1945ee3faa47c4",
+  "output_root": "/tmp/pace-issue4-verify-eqx13pl6",
+  "success_command": [
+    "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+    "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection_mujoco.py",
+    "--duration",
+    "0.1",
+    "--plot"
+  ],
+  "success_exit": 0,
+  "stdout": "Saved 40 samples to /tmp/pace-issue4-verify-eqx13pl6/data/x5_sim/chirp_data.pt\n",
+  "stderr": "/home/sevnce-mr/pace-sim2real/scripts/pace/mujoco_collection.py:318: UserWarning: FigureCanvasAgg is non-interactive, and thus cannot be shown\n  plt.show()\n",
+  "invalid_command": [
+    "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+    "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection_mujoco.py",
+    "--duration",
+    "0.001"
+  ],
+  "invalid_exit": 1,
+  "invalid_stderr": "Collection failed: duration must be a positive integer multiple of model timestep\n",
+  "dataset_sha256": "a1a726c91030e3d249b3c6918152c2ada1e45ccae8c22f374235435f4034aae7",
+  "previous_output_preserved": true,
+  "model_sha256": "370a5b9f1e83ca6a28baf635c497df7a4a6f5517d4bc14420c689e44a27d2249",
+  "tensors": {
+    "time": {
+      "shape": [
+        40
+      ],
+      "dtype": "torch.float64",
+      "finite": true
+    },
+    "dof_pos": {
+      "shape": [
+        40,
+        12
+      ],
+      "dtype": "torch.float32",
+      "finite": true
+    },
+    "des_dof_pos": {
+      "shape": [
+        40,
+        12
+      ],
+      "dtype": "torch.float32",
+      "finite": true
+    },
+    "dof_vel": {
+      "shape": [
+        40,
+        4
+      ],
+      "dtype": "torch.float32",
+      "finite": true
+    },
+    "des_dof_vel": {
+      "shape": [
+        40,
+        4
+      ],
+      "dtype": "torch.float32",
+      "finite": true
+    }
+  },
+  "last_timestamp": 0.0975
+}
