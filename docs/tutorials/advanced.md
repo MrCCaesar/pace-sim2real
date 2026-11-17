@@ -66,14 +66,9 @@ This loop continues until either:
 
 ## Changing the Optimization Objective
 
-The default objective minimizes joint position tracking error with bias compensation:
+The default objective supports leg position and wheel velocity together. Position residuals subtract only the candidate leg encoder bias; wheel residuals contain no bias. Each group's mean-square residual is divided by its configured error scale squared, then combined using normalized positive group weights. Raw RMSE remains separately reported in rad and rad/s. A pure-leg task uses only the position term.
 
-```python
-def tell(self, sim_dof_pos, real_dof_pos):
-    self.scores += torch.sum(torch.square(sim_dof_pos - real_dof_pos - self.sim_params[:, self.bias_idx]), dim=1)
-```
-
-Advanced objectives can be implemented inside the `tell()` method.
+Use the error scale and group weight settings described in [usage](../usage.md#mixed-positionvelocity-identification) to adjust weighting. The following sketches are alternative research objectives, not the implemented default or an approved extension of the mixed-data contract.
 
 ### Examples
 
@@ -189,7 +184,7 @@ TensorBoard metrics recorded include:
 
 Checkpoints saved:
 
-* Best trajectory (`best_trajectory.pt`)
+* Best trajectory (`best_result.pt` (paired evaluated parameters and response groups))
 * Mean parameters
 * Full progress (optional)
 
@@ -224,3 +219,8 @@ This enables:
 ## Summary
 
 The CMA-ES optimizer in PACE is designed for extensibility, transparency, and research flexibility. By customizing its objective, parameters, and convergence logic, users can tailor the system identification process to highly specific real-world challenges — from actuator modeling to task-specific sim-to-real transfer.
+
+
+### Mixed-joint contract update
+
+The position-only examples above describe the legacy pure-leg case. For mixed tasks use leg_order/wheel_order and the current [usage contract](../usage.md#mixed-positionvelocity-identification): parameter count is3*(L+W)+L+1, wheel errors use velocity, only legs have encoder bias, loss uses configurable normalized group means, and primary results pair evaluated parameters with their responses. Do not use distribution means as response provenance. Historical timing requires explicit real interval; measurement-only native-bias data requires recollection. Preserve current classes and task structure when adapting these examples.

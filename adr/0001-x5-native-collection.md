@@ -25,3 +25,7 @@ See .scratch/issue_4/research.md, native delay and sensor timing probes, and scr
 ## Approval references
 
 User confirmed native MJCF/friction/control and sensor-side measurement in Explore; approved mixed saved fields and pre-delay commands; answered Q1 collection-only, Q3 initial state, Q4 starting history; rejected contact exclusion in Q6 and delegated model/trajectory acceptance to themselves in Q7. Module layout and interface details were subsequently approved in Q8–Q10 and the Plan handoff; see ADR 0002 and .scratch/issue_4/interfaces.md.
+
+## CR2 supersession
+
+ADR0005 supersedes the measurement-only encoder-bias decision for future collection/fitting, per explicit user Q11 approval. This ADR remains the record of the original delivered behavior; migration is pending and original datasets retain their physical provenance.

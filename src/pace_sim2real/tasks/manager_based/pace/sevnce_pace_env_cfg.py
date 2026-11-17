@@ -2,6 +2,8 @@
 # Author: Filip Bjelonic
 # Licensed under the Apache License 2.0
 
+from typing import Any, cast
+
 import torch
 from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
@@ -62,8 +64,8 @@ class SevnceX5PaceCfg(PaceCfg):
 
     robot_name: str = "sevnce_x5_sim"
     data_dir: str = "sevnce_x5_sim/chirp_data.pt"  # located in pace_sim2real/data/anymal_d_sim/chirp_data.pt
-    bounds_params: torch.Tensor = torch.zeros((49, 2))  # 12 + 12 + 12 + 12 + 1 = 49 parameters to optimize
-    separate_dynamic_friction: bool = False  # appends 12 dynamic/static friction ratios -> 61 parameters
+    bounds_params: torch.Tensor = torch.zeros((61, 2))  # 3 * 16 + 12 leg biases + shared delay
+    separate_dynamic_friction: bool = False  # appends 16 dynamic/static friction ratios
     leg_order: list[str] = [
         "FL_hip_joint",
         "FL_thigh_joint",
@@ -87,21 +89,21 @@ class SevnceX5PaceCfg(PaceCfg):
         self.bounds_params[:16, 1] = 1.0  # armature between 1e-5 - 1.0 [kgm2]
         self.bounds_params[16:32, 1] = 7.0  # dof_damping between 0.0 - 7.0 [Nm s/rad]
         self.bounds_params[32:48, 1] = 0.5  # friction between 0.0 - 0.5
-        self.bounds_params[48:64, 0] = -0.1
-        self.bounds_params[48:64, 1] = 0.1  # bias between -0.1 - 0.1 [rad]
-        self.bounds_params[64, 1] = 10.0  # delay between 0.0 - 10.0 [sim steps]
+        self.bounds_params[48:60, 0] = -0.1
+        self.bounds_params[48:60, 1] = 0.1  # bias between -0.1 - 0.1 [rad]
+        self.bounds_params[60, 1] = 10.0  # delay between 0.0 - 10.0 [sim steps]
 
 
 @configclass
 class SevnceX5PaceSceneCfg(PaceSim2realSceneCfg):
     """Configuration for Sevnce X5 robot in Pace Sim2Real environment."""
 
-    robot: ArticulationCfg = SEVNCE_X5_CFG.replace(
+    robot: ArticulationCfg = cast(Any, SEVNCE_X5_CFG).replace(
         prim_path="{ENV_REGEX_NS}/Robot",
-        init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+        init_state=cast(Any, SEVNCE_X5_CFG.init_state).replace(pos=(0.0, 0.0, 1.0)),
         actuators={"joints": SEVNCE_PACE_ACTUATOR_CFG},
     )
-    robot.spawn.fix_root_link = True
+    cast(Any, robot.spawn).fix_root_link = True
 
 
 @configclass

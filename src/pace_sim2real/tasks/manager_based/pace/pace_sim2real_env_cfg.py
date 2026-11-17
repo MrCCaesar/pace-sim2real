@@ -159,6 +159,10 @@ class TerminationsCfg:
 class CMAESOptimizerCfg:
     """CMA-ES optimizer configuration."""
 
+    position_error_scale: float = 1.0
+    velocity_error_scale: float = 1.0
+    position_weight: float = 1.0
+    velocity_weight: float = 1.0
     max_iteration: int = 200
     epsilon: float = 1e-2
     sigma: float = 0.5
@@ -173,6 +177,12 @@ class PaceCfg:
     """Overall configuration for Pace Sim2Real task."""
 
     cmaes: CMAESOptimizerCfg = CMAESOptimizerCfg()
+    reference_leg_order: list[str] | None = None
+    reference_wheel_order: list[str] | None = None
+    reference_bias_model: str = "feedback_and_measurement"
+    reference_delay_mode: str = "command"
+    time_mode: str = "strict"
+    legacy_sample_dt: float | None = None
 
     robot_name: str = MISSING
     data_dir: str = MISSING
@@ -195,9 +205,14 @@ class PaceCfg:
         """Extend the parameter bounds by the dynamic to static friction ratios."""
         if not self.separate_dynamic_friction:
             return
-        num_joints = len(self.joint_order + (self.wheel_order if self.wheel_order is not None else []))
+        from pace_sim2real.utils.collection_contracts import resolve_joint_groups
+
+        legs, wheels = resolve_joint_groups(self)
+        self.leg_order, self.wheel_order = list(legs), list(wheels)
+        self.joint_order = list(legs + wheels)
+        num_joints = len(self.joint_order)
         num_params = self.bounds_params.shape[0]
-        num_before = 4 * num_joints + 1
+        num_before = 3 * num_joints + len(legs) + 1
         if num_params == num_before:
             ratio_bounds = torch.tensor(self.friction_ratio_bounds, dtype=self.bounds_params.dtype).repeat(
                 num_joints, 1
@@ -213,8 +228,13 @@ class PaceCfg:
         """Remove appended friction ratios and disable separate dynamic friction."""
         if not self.separate_dynamic_friction:
             return
-        num_joints = len(self.joint_order + (self.wheel_order if self.wheel_order is not None else []))
-        num_before = 4 * num_joints + 1
+        from pace_sim2real.utils.collection_contracts import resolve_joint_groups
+
+        legs, wheels = resolve_joint_groups(self)
+        self.leg_order, self.wheel_order = list(legs), list(wheels)
+        self.joint_order = list(legs + wheels)
+        num_joints = len(self.joint_order)
+        num_before = 3 * num_joints + len(legs) + 1
         num_params = self.bounds_params.shape[0]
         if num_params == num_before + num_joints:
             self.bounds_params = self.bounds_params[:num_before].clone()

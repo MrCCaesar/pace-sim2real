@@ -10,6 +10,7 @@ seed = 42
 path = "../src/pace_sim2real/assets/data/robots/sevnce/x5/mjcf/x5_calibration.xml"
 
 [trajectory]
+# Position centers are dimensionless: target = (center + sin(phase)) * amplitude * direction.
 position_directions = [1, 1, 1, -1, 1, 1, 1, 1, 1, -1, 1, 1]
 velocity_directions = [1, 1, 1, 1]
 position_centers = [0.0, 0.4, -1.4, 0.0, 0.4, -1.4, 0.0, 0.4, -1.4, 0.0, 0.4, -1.4]
@@ -17,6 +18,7 @@ position_amplitudes = [0.25, 0.5, 0.99, 0.25, 0.5, 0.99, 0.25, 0.5, 0.99, 0.25, 
 velocity_amplitudes = [10.0, 10.0, 10.0, 10.0]
 
 [measurement]
+# Leg feedback and saved position subtract bias; native servo input adds it to desired.
 encoder_bias = 0.05
 
 [channels]

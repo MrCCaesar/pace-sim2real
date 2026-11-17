@@ -71,17 +71,25 @@ def native_config(tmp_path):
         f"<worldbody>{bodies}</worldbody><actuator>{actuators}</actuator>"
         f"<sensor>{sensors}</sensor></mujoco>"
     )
-    return replace(cfg, model_path=path, min_frequency=1.0, max_frequency=1.0, duration=0.02)
+    return replace(
+        cfg,
+        model_path=path,
+        min_frequency=1.0,
+        max_frequency=1.0,
+        duration=0.02,
+        position_directions=(1.0,) * 12,
+        velocity_directions=(1.0,) * 4,
+    )
 
 
 def test_collect_preserves_sensor_time_and_native_delay_despite_reordered_model(native_config):
     data = collect(native_config)
     np.testing.assert_allclose(data.time, [0, 0.0025, 0.005, 0.0075, 0.01, 0.0125, 0.015, 0.0175])
-    np.testing.assert_allclose(data.dof_pos[:6], np.tile(np.array([-0.05, 0.35, -1.45] * 4), (6, 1)))
+    np.testing.assert_allclose(data.dof_pos[:6], np.tile(np.array([0.0, 0.2, -1.386] * 4), (6, 1)))
     assert np.all(data.dof_pos[6] > data.dof_pos[5])
     np.testing.assert_array_equal(data.dof_vel[:6], 0)
     assert np.all(data.dof_vel[6] > 0)
-    np.testing.assert_allclose(data.des_dof_pos[0], [0, 0.4, -1.4] * 4)
+    np.testing.assert_allclose(data.des_dof_pos[0], [0, 0.2, -1.386] * 4)
     assert data.des_dof_pos[1, 0] == pytest.approx(0.003926829327955169)
     assert data.des_dof_vel[1, 0] == pytest.approx(0.15707317311820676)
 
@@ -132,7 +140,7 @@ def test_noise_is_seeded_xml_scaled_and_does_not_change_physics(native_config):
     np.testing.assert_allclose(doubled.dof_vel - clean.dof_vel, 2 * (noisy.dof_vel - clean.dof_vel), atol=1e-15)
     np.testing.assert_array_equal(doubled.des_dof_pos, clean.des_dof_pos)
     shifted = collect(replace(native_config, encoder_bias=tuple([0.15] * 12)))
-    np.testing.assert_allclose(shifted.dof_pos, doubled.dof_pos - 0.1, atol=1e-15)
+    np.testing.assert_allclose(shifted.dof_pos, doubled.dof_pos, atol=1e-15)
     np.testing.assert_array_equal(shifted.dof_vel, doubled.dof_vel)
 
 
@@ -416,8 +424,8 @@ def test_independent_directions_mirror_centers_and_preserve_native_measurements(
         velocity_directions=(-1.0, 1.0, -1.0, 1.0),
     )
     data = collect(cfg)
-    np.testing.assert_allclose(data.des_dof_pos[0], [0.0, 0.4, 1.4] * 4)
-    np.testing.assert_allclose(data.dof_pos[:6], np.tile([-0.05, 0.35, 1.35] * 4, (6, 1)))
+    np.testing.assert_allclose(data.des_dof_pos[0], [0.0, 0.2, 1.386] * 4)
+    np.testing.assert_allclose(data.dof_pos[:6], np.tile([0.0, 0.2, 1.386] * 4, (6, 1)))
     assert data.des_dof_pos[1, 0] == pytest.approx(-0.003926829327955169)
     assert data.des_dof_vel[1, 0] == pytest.approx(-0.15707317311820676)
     assert data.des_dof_vel[1, 1] == pytest.approx(0.15707317311820676)
@@ -721,3 +729,22 @@ def test_failed_viewer_releases_ipc_even_while_exception_is_retained(native_conf
         collect(replace(native_config, visualize=True))
     assert error.value is not None
     assert set(directory.glob("sem.mp-*")) <= before
+
+
+def test_native_rejects_bias_shift_outside_control_range(native_config):
+    xml = native_config.model_path.read_text()
+    native_config.model_path.write_text(
+        xml.replace("<position ", '<position ctrllimited="true" ctrlrange="-0.01 0.01" ')
+    )
+    with pytest.raises(ValueError, match="control range"):
+        collect(native_config)
+
+
+def test_feedback_bias_changes_physical_spring_response(native_config):
+    # A spring anchored at physical zero distinguishes feedback bias from a mere output shift.
+    xml = native_config.model_path.read_text()
+    native_config.model_path.write_text(xml.replace("<joint name=", '<joint stiffness="1" name='))
+    data = collect(replace(native_config, position_amplitudes=(0.0,) * 12))
+    assert data.dof_pos[0, 0] == pytest.approx(0.0)
+    # Sphere inertia .004, servo viscous gain 1, dt=.0025; implicit damping integration.
+    assert data.dof_pos[1, 0] == pytest.approx(-0.00004807692307692308)

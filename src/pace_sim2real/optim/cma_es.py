@@ -2,15 +2,20 @@
 # Author: Filip Bjelonic
 # Licensed under the Apache License 2.0
 
+"""CMA-ES identification with paired, evaluated position/velocity responses."""
+
 from __future__ import annotations
 
+import math
 import os
-import warnings
+import tempfile
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import cmaes
 import torch
-from torch.utils.tensorboard import SummaryWriter as TensorboardSummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 
 class CMAESOptimizer:
@@ -28,310 +33,338 @@ class CMAESOptimizer:
         save_interval=10,
         save_optimization_process=False,
         separate_dynamic_friction=False,
+        *,
+        leg_order=None,
+        wheel_order=None,
+        position_error_scale=1.0,
+        velocity_error_scale=1.0,
+        position_weight=1.0,
+        velocity_weight=1.0,
+        reference_settings=None,
     ):
-
-        self.joint_order = joint_order
-        self.max_iteration = max_iteration
-        self.epsilon = epsilon
+        self.leg_order = list(joint_order if leg_order is None else leg_order)
+        self.wheel_order = list(wheel_order or [])
+        self.joint_order = self.leg_order + self.wheel_order
+        if (
+            list(joint_order) != self.joint_order
+            or not self.leg_order
+            or len(set(self.joint_order)) != len(self.joint_order)
+        ):
+            raise ValueError("joint_order must contain unique leg_order + wheel_order")
+        if population_size < 2 or max_iteration < 1:
+            raise ValueError("Require population_size >=2 and max_iteration >=1")
+        self.device = torch.device(device)
+        self.population_size = population_size
+        self.max_iteration, self.epsilon = max_iteration, epsilon
+        if epsilon is not None and (not math.isfinite(epsilon) or epsilon < 0):
+            raise ValueError("epsilon must be finite and nonnegative")
         self.save_interval = save_interval
-        self.device = device
         self.save_optimization_process = save_optimization_process
         self.separate_dynamic_friction = separate_dynamic_friction
-        self._timer_start = datetime.now()  # timer for logging purposes
-
-        # create log_dir in YY_MM_DD_hh-mm-ss format
-        folder_time = datetime.now().strftime("%y_%m_%d_%H-%M-%S")
-        # create string with time and date
-        log_dir = os.path.join(log_dir, folder_time)
-        os.makedirs(log_dir, exist_ok=True)
-        self.writer = TensorboardSummaryWriter(log_dir=log_dir)
-        torch.save(
-            {
-                "bounds": bounds,
-                "joint_order": joint_order,
-                "dof_pos": data["dof_pos"],
-                "des_dof_pos": data["des_dof_pos"],
-                "time": data["time"],
-                "separate_dynamic_friction": separate_dynamic_friction,
-            },
-            log_dir + "/config.pt",
+        self.scales = (position_error_scale, velocity_error_scale)
+        self.weights = (position_weight, velocity_weight)
+        if any(not math.isfinite(x) or x <= 0 for x in (*self.scales, *self.weights)):
+            raise ValueError("Error scales and weights must be finite and positive")
+        num_joints, num_legs = len(self.joint_order), len(self.leg_order)
+        self.armature_idx, self.damping_idx, self.friction_idx = (
+            slice(0, num_joints),
+            slice(num_joints, 2 * num_joints),
+            slice(2 * num_joints, 3 * num_joints),
         )
-
-        self.bounds = bounds
-
-        bounds_normalized = torch.ones_like(bounds)
-        bounds_normalized[:, 0] *= -1
-        mean_normalized = torch.zeros_like(bounds[:, 0])
-
-        self.optimizer = cmaes.CMA(
-            mean=mean_normalized.cpu().numpy(),
-            sigma=sigma,
-            bounds=bounds_normalized.cpu().numpy(),
-            seed=0,
-            population_size=population_size,
-        )
-
-        self.scores_counter = 0
-        self.iteration_counter = 0
-
-        self.scores = torch.zeros(population_size, device=device)
-        self.scores_buffer = torch.zeros((max_iteration, population_size), device=device)
-        self.sim_dof_pos_buffer = torch.zeros(
-            (population_size, data["dof_pos"].shape[0], len(joint_order)), device=device
-        )
-
-        self.params = torch.zeros((population_size, bounds.shape[0]), device=device)
-        self.sim_params = torch.zeros_like(self.params)
-        if save_optimization_process:
-            self.sim_params_buffer = torch.zeros((max_iteration, population_size, bounds.shape[0]), device=device)
-
-        num_joints = len(joint_order)
-        self.armature_idx = slice(0, num_joints)
-        self.damping_idx = slice(num_joints, 2 * num_joints)
-        self.friction_idx = slice(2 * num_joints, 3 * num_joints)
-        self.bias_idx = slice(3 * num_joints, 4 * num_joints)
-        self.delay_idx = 4 * num_joints
-        # dynamic to static friction ratios come after all other parameters
-        self.friction_ratio_idx = slice(4 * num_joints + 1, 5 * num_joints + 1)
-        expected_num_params = 4 * num_joints + 1 + (num_joints if separate_dynamic_friction else 0)
-        if bounds.shape[0] != expected_num_params:
-            raise ValueError(
-                f"Expected {expected_num_params} parameter bounds (separate_dynamic_friction="
-                f"{separate_dynamic_friction}), got {bounds.shape[0]}."
-            )
-        # dynamic friction = ratio * static friction must stay within [0, static friction]
-        if separate_dynamic_friction:
-            ratio_bounds = bounds[self.friction_ratio_idx]
+        self.bias_idx, self.delay_idx = slice(3 * num_joints, 3 * num_joints + num_legs), 3 * num_joints + num_legs
+        self.friction_ratio_idx = slice(3 * num_joints + num_legs + 1, 4 * num_joints + num_legs + 1)
+        k = 3 * num_joints + num_legs + 1 + (num_joints if separate_dynamic_friction else 0)
+        self.bounds = torch.as_tensor(bounds, dtype=torch.float32, device=self.device).clone()
+        if (
+            self.bounds.shape != (k, 2)
+            or not torch.isfinite(self.bounds).all()
+            or (self.bounds[:, 0] > self.bounds[:, 1]).any()
+        ):
+            raise ValueError(f"Expected {k} finite ordered parameter bounds")
+        if (self.bounds[: 3 * num_joints] < 0).any() or (self.bounds[self.delay_idx] < 0).any():
+            raise ValueError("Mechanical parameters and delay must be nonnegative")
+        if separate_dynamic_friction and (
+            (self.bounds[self.friction_ratio_idx] < 0).any() or (self.bounds[self.friction_ratio_idx] > 1).any()
+        ):
+            raise ValueError("Friction ratio bounds must be within [0,1]")
+        self.data = {name: value.detach().cpu().clone() for name, value in data.items()}
+        self.num_samples = len(data["time"])
+        if self.num_samples < 2:
+            raise ValueError("Require at least two samples")
+        for field, width in [("dof_pos", num_legs), ("des_dof_pos", num_legs)] + (
+            [("dof_vel", len(self.wheel_order)), ("des_dof_vel", len(self.wheel_order))] if self.wheel_order else []
+        ):
             if (
-                torch.any(ratio_bounds[:, 0] < 0.0)
-                or torch.any(ratio_bounds[:, 1] > 1.0)
-                or torch.any(ratio_bounds[:, 0] > ratio_bounds[:, 1])
+                field not in data
+                or data[field].shape != (self.num_samples, width)
+                or not torch.isfinite(data[field]).all()
             ):
-                raise ValueError(
-                    "Dynamic to static friction ratio bounds must satisfy 0 <= lower <= upper <= 1, "
-                    f"got {ratio_bounds.tolist()}."
-                )
-            if not torch.equal(self.sim_params[:, self.friction_idx], self.dynamic_friction()):
-                warnings.warn(
-                    "Newton does not support separate static/dynamic joint friction. "
-                    "Using friction as the dry-friction effort and ignoring dynamic_friction; "
-                    "this is not equivalent to the PhysX friction model. "
-                    "Support for this effort depends on the selected Newton solver.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+                raise ValueError(f"Invalid reference field {field}")
+        self.settings = dict(reference_settings or {})
+        self.settings.update(
+            position_error_scale=position_error_scale,
+            velocity_error_scale=velocity_error_scale,
+            position_weight=position_weight,
+            velocity_weight=velocity_weight,
+            bounds=self.bounds.cpu(),
+            leg_order=self.leg_order,
+            wheel_order=self.wheel_order,
+        )
+        self.active = self.bounds[:, 1] > self.bounds[:, 0]
+        dimension = int(self.active.sum())
+        self.optimizer = (
+            cmaes.CMA(
+                mean=torch.zeros(dimension).numpy(),
+                sigma=sigma,
+                bounds=torch.tensor([[-1.0, 1.0]]).repeat(dimension, 1).numpy(),
+                seed=0,
+                population_size=population_size,
+            )
+            if dimension
+            else None
+        )
+        self.log_dir = Path(log_dir) / datetime.now().strftime("%y_%m_%d_%H-%M-%S-%f")
+        self.log_dir.mkdir(parents=True, exist_ok=False)
+        self.writer = SummaryWriter(str(self.log_dir))
+        self.iteration_counter = 0
+        self.scores_counter = 0
+        self.best_result: dict[str, Any] | None = None
+        self.stop_reason = None
+        self.scores_buffer = torch.zeros((max_iteration, population_size), device=self.device)
+        self.sim_params_buffer = []
+        self.sim_dof_pos_buffer = torch.empty((population_size, self.num_samples, num_legs), device=self.device)
+        self.sim_dof_vel_buffer = torch.empty(
+            (population_size, self.num_samples, len(self.wheel_order)), device=self.device
+        )
+        self.squared_errors = torch.zeros((population_size, 2), device=self.device, dtype=torch.float64)
+        self.scores = torch.zeros(population_size, device=self.device, dtype=torch.float64)
         self._reset_population()
-        print("CMA-ES optimizer initialized.")
-        print("Current iteration: ", self.iteration_counter)
+        self._atomic_save({"schema_version": 2, **self.data, **self.settings}, self.log_dir / "config.pt")
 
     def ask(self):
-        return self.optimizer.ask()
+        return self.optimizer.ask() if self.optimizer is not None else torch.empty(0).numpy()
 
-    def tell(self, sim_dof_pos, real_dof_pos):
-        self.scores += torch.sum(torch.square(sim_dof_pos - real_dof_pos - self.sim_params[:, self.bias_idx]), dim=1)
-        self.sim_dof_pos_buffer[:, self.scores_counter, :] = sim_dof_pos
+    def _params_to_sim_params(self, params):
+        values = self.bounds[:, 0].expand(len(params) if params.ndim > 1 else 1, -1).clone()
+        values[:, self.active] += (
+            (params.reshape(values.shape[0], -1) + 1) / 2 * (self.bounds[self.active, 1] - self.bounds[self.active, 0])
+        )
+        return values if params.ndim > 1 else values[0]
+
+    def _reset_population(self):
+        self.params = torch.stack(
+            [torch.as_tensor(self.ask(), device=self.device, dtype=torch.float32) for _ in range(self.population_size)]
+        )
+        self.sim_params = self._params_to_sim_params(self.params)
+
+    def tell(self, sim_dof_pos, real_dof_pos, *, sim_dof_vel=None, real_dof_vel=None):
+        if self.scores_counter >= self.num_samples:
+            raise ValueError("More samples than reference trajectory")
+        population, num_legs, num_wheels = self.population_size, len(self.leg_order), len(self.wheel_order)
+        groups = [(sim_dof_pos, real_dof_pos, num_legs)]
+        if num_wheels:
+            groups.append((sim_dof_vel, real_dof_vel, num_wheels))
+        elif any(x is not None and x.numel() for x in (sim_dof_vel, real_dof_vel)):
+            raise ValueError("Pure-position task received wheel data")
+        for simulated, measured, width in groups:
+            if (
+                simulated is None
+                or measured is None
+                or simulated.shape != (population, width)
+                or measured.shape != (population, width)
+            ):
+                raise ValueError("Response shape must match population and joint group")
+            if simulated.device != self.device or measured.device != self.device:
+                raise ValueError("Response device must match optimizer")
+            if not torch.isfinite(simulated).all() or not torch.isfinite(measured).all():
+                raise ValueError("Nonfinite response")
+        q = sim_dof_pos - self.sim_params[:, self.bias_idx]
+        self.sim_dof_pos_buffer[:, self.scores_counter] = q
+        self.squared_errors[:, 0] += (q.double() - real_dof_pos.double()).square().mean(dim=1)
+        if num_wheels:
+            assert sim_dof_vel is not None and real_dof_vel is not None
+            self.sim_dof_vel_buffer[:, self.scores_counter] = sim_dof_vel
+            self.squared_errors[:, 1] += (sim_dof_vel.double() - real_dof_vel.double()).square().mean(dim=1)
         self.scores_counter += 1
 
     def evolve(self):
-        self.scores /= self.scores_counter
-        self.scores_buffer[self.iteration_counter, :] = self.scores
+        if self.scores_counter != self.num_samples:
+            raise ValueError("Only a complete rollout can evolve or become best")
+        means = self.squared_errors / self.num_samples
+        score = means[:, 0] * self.weights[0] / self.scales[0] ** 2
+        weight = self.weights[0]
+        if self.wheel_order:
+            score += means[:, 1] * self.weights[1] / self.scales[1] ** 2
+            weight += self.weights[1]
+        self.scores = score / weight
+        if not torch.isfinite(self.scores).all():
+            raise ValueError("Nonfinite objective")
+        self.scores_buffer[self.iteration_counter] = self.scores
+        index = int(self.scores.argmin())
+        if self.best_result is None or self.scores[index].item() < self.best_result["score"]:
+            self.best_result = self._result(index, means)
+            self._atomic_save(self.best_result, self.log_dir / "best_result.pt")
         if self.save_optimization_process:
-            self.sim_params_buffer[self.iteration_counter, :, :] = self.sim_params
-        solutions = []
-        for i in range(self.optimizer.population_size):
-            solutions.append((self.params[i].cpu().numpy(), self.scores[i].item()))
-        self.optimizer.tell(solutions)
-        if self.save_interval > 0 and self.iteration_counter % self.save_interval == 0:
-            self.save_checkpoint(
-                self._params_to_sim_params(torch.tensor(self.optimizer._mean, device=self.device)),
-                self.iteration_counter,
+            self.sim_params_buffer.append(self.sim_params.detach().cpu().clone())
+        self.writer.add_scalar("score/best", self.scores[index].item(), self.iteration_counter)
+        self.writer.add_scalar("error/position_rmse_rad", means[index, 0].sqrt().item(), self.iteration_counter)
+        if self.wheel_order:
+            self.writer.add_scalar("error/velocity_rmse_rad_s", means[index, 1].sqrt().item(), self.iteration_counter)
+        if self.optimizer is not None:
+            self.optimizer.tell(
+                [(self.params[i].cpu().numpy(), self.scores[i].item()) for i in range(self.population_size)]
             )
-        self._print_iteration()
-
+        if self.save_interval > 0 and self.iteration_counter % self.save_interval == 0:
+            mean = (
+                torch.as_tensor(self.optimizer._mean, device=self.device)
+                if self.optimizer is not None
+                else torch.empty(0, device=self.device)
+            )
+            self._atomic_save(
+                self._params_to_sim_params(mean).cpu(), self.log_dir / f"mean_{self.iteration_counter:03d}.pt"
+            )
+        print(
+            f"Generation {self.iteration_counter}: best score={self.scores[index].item():.6g}; position"
+            f" RMSE={means[index, 0].sqrt().item():.6g} rad; velocity RMSE={means[index, 1].sqrt().item():.6g} rad/s"
+        )
+        self.iteration_counter += 1
+        self.scores_counter = 0
+        self.squared_errors.zero_()
         self._reset_population()
 
-        self.scores = torch.zeros_like(self.scores)
-        self.scores_counter = 0
-        self.iteration_counter += 1
-        print("CMA-ES optimizer iteration: ", self.iteration_counter)
+    def _result(self, index, means):
+        params = self.sim_params[index].detach().cpu().clone()
+        delay = float(params[self.delay_idx])
+        names = [f"{kind}:{n}" for kind in ("armature", "damping", "friction") for n in self.joint_order]
+        names += [f"encoder_bias:{n}" for n in self.leg_order] + ["delay"]
+        if self.separate_dynamic_friction:
+            names += [f"friction_ratio:{n}" for n in self.joint_order]
+        result = dict(
+            schema_version=2,
+            params=params,
+            parameter_names=names,
+            leg_order=self.leg_order,
+            wheel_order=self.wheel_order,
+            generation=self.iteration_counter,
+            candidate_index=index,
+            time=self.data["time"].double(),
+            original_time=self.data.get("original_time", self.data["time"]).double(),
+            reference={k: v for k, v in self.data.items() if k != "original_time"},
+            sim_dof_pos=self.sim_dof_pos_buffer[index].detach().cpu().clone(),
+            score=self.scores[index].item(),
+            position_rmse=means[index, 0].sqrt().item(),
+            velocity_rmse=means[index, 1].sqrt().item() if self.wheel_order else None,
+            settings=self.settings,
+            delay_candidate=delay,
+            delay_steps=math.floor(delay),
+            delay_seconds=math.floor(delay) * self.settings.get("physics_dt", 0.0),
+        )
+        if self.wheel_order:
+            result["sim_dof_vel"] = self.sim_dof_vel_buffer[index].detach().cpu().clone()
+        return result
 
     def finished(self):
-        finished = self.max_iteration <= self.iteration_counter
-        diff_score = (
-            self.scores_buffer[self.iteration_counter - 1, :].max()
-            - self.scores_buffer[self.iteration_counter - 1, :].min()
-        ) / self.scores_buffer[self.iteration_counter - 1, :].min()
-        finished = finished or (self.epsilon is not None and diff_score < self.epsilon)
-        if finished:
-            print("CMA-ES optimization finished.")
-            self.save_checkpoint(
-                self._params_to_sim_params(torch.tensor(self.optimizer._mean, device=self.device)),
-                self.iteration_counter - 1,
-                finished=True,
-            )
-        return finished
-
-    def _reset_population(self):
-        for i in range(self.optimizer.population_size):
-            self.params[i, :] = torch.tensor(self.optimizer.ask(), device=self.device)
-        self.sim_params = self._params_to_sim_params(self.params)
-
-    def update_simulator(self, articulation, joint_ids, initial_position):
-        env_ids = torch.arange(len(self.sim_params[:, self.armature_idx]))
-        articulation.write_joint_armature_to_sim_index(
-            armature=self.sim_params[:, self.armature_idx], joint_ids=joint_ids, env_ids=env_ids
-        )
-
-        articulation.write_joint_friction_coefficient_to_sim_index(
-            joint_friction_coeff=self.sim_params[:, self.friction_idx],
-            joint_dynamic_friction_coeff=self.dynamic_friction(),
-            joint_viscous_friction_coeff=self.sim_params[:, self.damping_idx],
-            joint_ids=joint_ids,
-            env_ids=env_ids,
-        )
-
-        articulation.write_joint_position_to_sim(
-            initial_position + self.sim_params[:, self.bias_idx], joint_ids=joint_ids
-        )
-        articulation.write_joint_velocity_to_sim(torch.zeros_like(initial_position), joint_ids=joint_ids)
-        for drive_type in articulation.actuators:
-            drive_indices = articulation.actuators[drive_type].joint_indices
-            if isinstance(drive_indices, slice):
-                all_idx = torch.arange(articulation.num_joints, device=joint_ids.device)
-                drive_indices = all_idx[drive_indices]
-            else:
-                drive_indices = torch.as_tensor(drive_indices, dtype=torch.long, device=joint_ids.device)
-
-            comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
-            if not torch.all(comparison_matrix.sum(dim=0) == 1):
-                raise ValueError(f"Each joint in actuator {drive_type!r} must occur exactly once in joint_order.")
-            drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
-            articulation.actuators[drive_type].update_encoder_bias(
-                self.sim_params[:, self.bias_idx][:, drive_joint_idx]
-            )
-            articulation.actuators[drive_type].update_time_lags(self.sim_params[:, self.delay_idx].to(torch.int))
-            articulation.actuators[drive_type].reset(env_ids)
-
-    def dynamic_friction(self):
-        """Dynamic Coulomb friction per env and joint, equal to the static friction unless identified separately."""
-        if self.separate_dynamic_friction:
-            return self.sim_params[:, self.friction_idx] * self.sim_params[:, self.friction_ratio_idx]
-        return self.sim_params[:, self.friction_idx]
-
-    def _print_iteration(self):
-        min_score = torch.min(self.scores)
-        max_score = torch.max(self.scores)
-        min_index = torch.argmin(self.scores)
-        print("Max score: ", max_score.item())
-        print("Min score: ", min_score.item(), " at index: ", min_index.item())
-        print("Armature: ", self.sim_params[min_index, self.armature_idx].tolist())
-        print("Viscous Friction: ", self.sim_params[min_index, self.damping_idx].tolist())
-        if self.separate_dynamic_friction:
-            print("Static Friction: ", self.sim_params[min_index, self.friction_idx].tolist())
-            print("Dynamic Friction: ", self.dynamic_friction()[min_index].tolist())
-        else:
-            print("Static/Dynamic Friction: ", self.sim_params[min_index, self.friction_idx].tolist())
-        print("Bias: ", self.sim_params[min_index, self.bias_idx].tolist())
-        print("Delay: ", self.sim_params[min_index, self.delay_idx].tolist())
-        print(f"Elapsed time: {(datetime.now() - self._timer_start).total_seconds():.1f} seconds")
-        self._timer_start = datetime.now()
-        self._log()
-
-    def _params_to_sim_params(self, params):
-        sim_params = (params + 1.0) / 2.0  # change range from 0 to 1
-        sim_params = self.bounds[:, 0] + sim_params * (
-            self.bounds[:, 1] - self.bounds[:, 0]
-        )  # range from lower to upper bound
-        return sim_params
+        if not self.iteration_counter:
+            return False
+        spread = (self.scores.max() - self.scores.min()) / self.scores.min().abs().clamp_min(1e-12)
+        if self.iteration_counter >= self.max_iteration:
+            self.stop_reason = "max_iteration"
+        elif self.epsilon is not None and spread < self.epsilon:
+            self.stop_reason = "relative_spread"
+        return self.stop_reason is not None
 
     def get_best_sim_params(self):
-        best_params = torch.tensor(self.optimizer._mean)
-        return self._params_to_sim_params(best_params)
+        if self.best_result is None:
+            raise RuntimeError("No completed candidate evaluation")
+        return self.best_result["params"].to(self.device).clone()
 
-    def _log(self):
-        min_score, min_score_index = torch.min(self.scores, dim=0)
-        max_score, _ = torch.max(self.scores, dim=0)
-        for i in range(len(self.joint_order)):
-            self.writer.add_histogram(
-                "4_Bias/distribution_" + self.joint_order[i],
-                self.sim_params[:, self.bias_idx][:, i],
-                self.iteration_counter,
-            )
-            self.writer.add_histogram(
-                "3_Static_Dynamic_Friction/distribution_" + self.joint_order[i],
-                self.sim_params[:, self.friction_idx][:, i],
-                self.iteration_counter,
-            )
-            self.writer.add_histogram(
-                "2_Viscous_Friction/distribution_" + self.joint_order[i],
-                self.sim_params[:, self.damping_idx][:, i],
-                self.iteration_counter,
-            )
-            self.writer.add_histogram(
-                "1_Armature/distribution_" + self.joint_order[i],
-                self.sim_params[:, self.armature_idx][:, i],
-                self.iteration_counter,
-            )
+    def dynamic_friction(self):
+        friction = self.sim_params[:, self.friction_idx]
+        return friction * self.sim_params[:, self.friction_ratio_idx] if self.separate_dynamic_friction else friction
 
-            self.writer.add_scalar(
-                "4_Bias/best_" + self.joint_order[i],
-                self.sim_params[min_score_index, self.bias_idx][i].item(),
-                self.iteration_counter,
-            )
-            self.writer.add_scalar(
-                "3_Static_Dynamic_Friction/best_" + self.joint_order[i],
-                self.sim_params[min_score_index, self.friction_idx][i].item(),
-                self.iteration_counter,
-            )
-            self.writer.add_scalar(
-                "2_Viscous_Friction/best_" + self.joint_order[i],
-                self.sim_params[min_score_index, self.damping_idx][i].item(),
-                self.iteration_counter,
-            )
-            self.writer.add_scalar(
-                "1_Armature/best_" + self.joint_order[i],
-                self.sim_params[min_score_index, self.armature_idx][i].item(),
-                self.iteration_counter,
-            )
-            if self.separate_dynamic_friction:
-                self.writer.add_histogram(
-                    "6_Dynamic_Friction_Ratio/distribution_" + self.joint_order[i],
-                    self.sim_params[:, self.friction_ratio_idx][:, i],
-                    self.iteration_counter,
-                )
-                self.writer.add_scalar(
-                    "6_Dynamic_Friction_Ratio/best_" + self.joint_order[i],
-                    self.sim_params[min_score_index, self.friction_ratio_idx][i].item(),
-                    self.iteration_counter,
-                )
-                self.writer.add_scalar(
-                    "6_Dynamic_Friction/best_" + self.joint_order[i],
-                    self.dynamic_friction()[min_score_index, i].item(),
-                    self.iteration_counter,
-                )
-        self.writer.add_histogram("0_Delay/distribution", self.sim_params[:, self.delay_idx], self.iteration_counter)
-        self.writer.add_scalar(
-            "0_Delay/best", self.sim_params[min_score_index, self.delay_idx].item(), self.iteration_counter
+    def update_simulator(self, articulation, joint_ids, initial_position, *, initial_wheel_velocity=None):
+        num_joints, num_legs, num_wheels = len(self.joint_order), len(self.leg_order), len(self.wheel_order)
+        ids = torch.as_tensor(joint_ids, device=self.device, dtype=torch.long)
+        if ids.shape != (num_joints,) or initial_position.shape != (self.population_size, num_legs):
+            raise ValueError("Initial state shape does not match groups/population")
+        if num_wheels and (
+            initial_wheel_velocity is None or initial_wheel_velocity.shape != (self.population_size, num_wheels)
+        ):
+            raise ValueError("Mixed task requires initial wheel velocity")
+        backend = type(articulation).__module__
+        newton = "newton" in backend
+        if newton and self.separate_dynamic_friction:
+            raise ValueError("Newton does not support separate dynamic friction identification")
+        drives = []
+        for name, drive in articulation.actuators.items():
+            if not callable(getattr(drive, "update_encoder_bias", None)) or not callable(
+                getattr(drive, "update_time_lags", None)
+            ):
+                raise ValueError(f"{name}: Python PACE actuator required")
+            if drive.cfg.delay_mode != self.settings.get("reference_delay_mode", "command"):
+                raise ValueError("Reference and actuator delay modes differ")
+            if self.bounds[self.delay_idx, 1] > drive.cfg.max_delay:
+                raise ValueError("Candidate delay exceeds actuator capacity")
+            drive_ids = torch.arange(articulation.num_joints, device=self.device)[drive.joint_indices]
+            matches = ids[:, None] == drive_ids[None, :]
+            if not (matches.sum(dim=0) == 1).all():
+                raise ValueError("Every actuator joint must occur in controlled joint order")
+            drives.append((drive, matches.long().argmax(dim=0)))
+        env_ids = torch.arange(self.population_size, device=self.device)
+        articulation.write_joint_armature_to_sim_index(
+            armature=self.sim_params[:, self.armature_idx], joint_ids=ids, env_ids=env_ids
         )
+        articulation.write_joint_friction_coefficient_to_sim_index(
+            joint_friction_coeff=self.sim_params[:, self.friction_idx],
+            joint_dynamic_friction_coeff=None if newton else self.dynamic_friction(),
+            joint_viscous_friction_coeff=self.sim_params[:, self.damping_idx],
+            joint_ids=ids,
+            env_ids=env_ids,
+        )
+        position = articulation.data.default_joint_pos.torch[:, ids].clone()
+        velocity = articulation.data.default_joint_vel.torch[:, ids].clone()
+        position[:, :num_legs] = initial_position + self.sim_params[:, self.bias_idx]
+        if num_wheels:
+            velocity[:, num_legs:] = initial_wheel_velocity
+        if not torch.isfinite(position).all() or not torch.isfinite(velocity).all():
+            raise ValueError("Nonfinite initial state")
+        self.settings.update(
+            initial_wheel_angles=position[:, num_legs:].cpu(),
+            initial_leg_velocities=velocity[:, :num_legs].cpu(),
+            backend=backend,
+        )
+        articulation.write_joint_position_to_sim_index(position=position, joint_ids=ids, env_ids=env_ids)
+        articulation.write_joint_velocity_to_sim_index(velocity=velocity, joint_ids=ids, env_ids=env_ids)
+        bias = torch.zeros((self.population_size, num_joints), device=self.device)
+        bias[:, :num_legs] = self.sim_params[:, self.bias_idx]
+        for drive, local in drives:
+            drive.update_encoder_bias(bias[:, local])
+            drive.update_time_lags(self.sim_params[:, self.delay_idx].floor().long())
+            drive.reset(env_ids)
 
-        self.writer.add_scalar("0_Episode/score", min_score.item(), self.iteration_counter)
-        self.writer.add_scalar("0_Episode/max_score", max_score.item(), self.iteration_counter)
-        self.writer.add_scalar("0_Episode/diff_score", (max_score - min_score) / min_score, self.iteration_counter)
-
-    def save_checkpoint(self, mean, iteration, finished=False):
-        min_index = torch.argmin(self.scores_buffer[iteration, :])
-        best_traj = self.sim_dof_pos_buffer[min_index].detach().clone()
-        best_traj = best_traj.cpu()
-        torch.save(best_traj, os.path.join(self.writer.log_dir, "best_trajectory.pt"))
-        torch.save(mean, os.path.join(self.writer.log_dir, "mean_" + f"{iteration:03}" + ".pt"))
-        if finished and self.save_optimization_process:
-            torch.save(
-                {
-                    "params_buffer": self.sim_params_buffer,
-                    "scores_buffer": self.scores_buffer,
-                },
-                os.path.join(self.writer.log_dir, "progress.pt"),
-            )
+    @staticmethod
+    def _atomic_save(value, path):
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+                temporary = stream.name
+                torch.save(value, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.unlink(temporary)
 
     def close(self):
+        if self.best_result is not None:
+            self._atomic_save(self.best_result, self.log_dir / "best_result.pt")
+        if self.save_optimization_process:
+            self._atomic_save(
+                {
+                    "scores_buffer": self.scores_buffer[: self.iteration_counter].cpu(),
+                    "sim_params_buffer": self.sim_params_buffer,
+                },
+                self.log_dir / "progress.pt",
+            )
         self.writer.close()

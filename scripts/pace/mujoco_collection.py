@@ -216,13 +216,6 @@ def collect(config: CollectionConfig) -> CollectionData:
     centers = np.array((*config.position_centers, 0.0, 0.0, 0.0, 0.0))
     amplitudes = np.array((*config.position_amplitudes, *config.velocity_amplitudes))
     ctrl_ids = model.actuator_ctrladr[actuator_ids]
-    data.qpos[model.jnt_qposadr[joint_ids]] = centers
-    data.qvel[:] = 0
-    data.ctrl[ctrl_ids] = centers
-    for index, actuator in enumerate(actuator_ids):
-        samples = int(model.actuator_history[actuator, 0])
-        if samples:
-            mujoco.mj_initCtrlHistory(model, data, actuator, None, np.full((samples, 1), centers[index]))
     time = np.arange(steps, dtype=np.float64) * dt
     phase = (
         2
@@ -233,6 +226,22 @@ def collect(config: CollectionConfig) -> CollectionData:
         )
     )
     desired = (centers + np.sin(phase[:, None])) * amplitudes * directions
+    control = desired.copy()
+    control[:, :12] += config.encoder_bias
+    for index, actuator in enumerate(actuator_ids):
+        if model.actuator_ctrllimited[actuator]:
+            lower, upper = model.actuator_ctrlrange[actuator]
+            if np.any(control[:, index] < lower) or np.any(control[:, index] > upper):
+                raise ValueError(
+                    f"{(config.position_joints + config.velocity_joints)[index]}: target exceeds control range"
+                )
+    data.qpos[model.jnt_qposadr[joint_ids]] = control[0]
+    data.qvel[:] = 0
+    data.ctrl[ctrl_ids] = control[0]
+    for index, actuator in enumerate(actuator_ids):
+        samples = int(model.actuator_history[actuator, 0])
+        if samples:
+            mujoco.mj_initCtrlHistory(model, data, actuator, None, np.full((samples, 1), control[0, index]))
     measured = np.empty((steps, 16), dtype=np.float64)
     rng = np.random.default_rng(config.seed)
     noise = model.sensor_noise[sensor_ids]
@@ -244,7 +253,7 @@ def collect(config: CollectionConfig) -> CollectionData:
         session = ViewerSession(config.model_path, model, data)
     with session as viewer:
         for step in range(steps):
-            data.ctrl[ctrl_ids] = desired[step]
+            data.ctrl[ctrl_ids] = control[step]
             mujoco.mj_forward(model, data)
             _check_dynamics(data, time[step], step)
             measured[step] = data.sensordata[sensor_addresses] + rng.normal(0, noise)

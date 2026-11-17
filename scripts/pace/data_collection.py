@@ -38,9 +38,16 @@ from isaaclab_tasks.utils import resolve_task_config, setup_preset_cli
 
 """Rest everything follows."""
 
+from typing import Any
+
 from torch import pi
 
 from pace_sim2real.utils import project_root
+from pace_sim2real.utils.collection_contracts import (
+    pack_actions,
+    resolve_action_mapping,
+    resolve_joint_groups,
+)
 
 _SEED = 42
 
@@ -51,7 +58,12 @@ def main(argv: list[str] | None = None):
     torch.manual_seed(_SEED)
 
     # parse configuration
+    env_cfg: Any
     env_cfg, _ = resolve_task_config(args_cli.task, "")
+    legs, wheels = resolve_joint_groups(env_cfg.sim2real)
+    env_cfg.sim2real.leg_order = list(legs)
+    env_cfg.sim2real.wheel_order = list(wheels)
+    env_cfg.sim2real.joint_order = list(legs + wheels)
     apply_env_overrides(args_cli, env_cfg)
     args_cli.device = env_cfg.sim.device
 
@@ -65,7 +77,7 @@ def main(argv: list[str] | None = None):
     with launch_simulation(env_cfg, args_cli), contextlib.ExitStack() as cleanup:
         apply_video_recording(env_cfg, log_dir, args_cli, subdir="play")
         # create environment
-        env = gym.make(args_cli.task, cfg=env_cfg)
+        env: Any = gym.make(args_cli.task, cfg=env_cfg)
         cleanup.callback(lambda: close_env(env))
 
         # print info (this is vectorized environment)
@@ -75,25 +87,17 @@ def main(argv: list[str] | None = None):
         # reset environment
         articulation = env.unwrapped.scene["robot"]
 
-        legs_order = env_cfg.sim2real.leg_order
-        wheels_order = env_cfg.sim2real.wheel_order if env_cfg.sim2real.wheel_order is not None else []
-        joint_order = env_cfg.sim2real.joint_order
-        leg_ids = torch.tensor(
-            [articulation.joint_names.index(name) for name in legs_order], device=env.unwrapped.device
-        )
-        wheel_ids = torch.tensor(
-            [articulation.joint_names.index(name) for name in wheels_order], device=env.unwrapped.device
-        )
-        joint_ids = torch.tensor(
-            [articulation.joint_names.index(name) for name in joint_order], device=env.unwrapped.device
-        )
+        legs_order, wheels_order = resolve_joint_groups(env_cfg.sim2real)
+        mapping = resolve_action_mapping(env.unwrapped, legs_order, wheels_order)
+        leg_ids, wheel_ids = mapping["leg_ids"], mapping["wheel_ids"]
+        joint_ids = torch.tensor(leg_ids + wheel_ids, device=env.unwrapped.device)
 
         armature = torch.tensor([0.1] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
         damping = torch.tensor([4.5] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)
         friction = torch.tensor([0.05] * len(joint_ids), device=env.unwrapped.device).unsqueeze(0)  # static friction
         dynamic_friction = 0.5 * friction  # dynamic friction (must not exceed static friction)
         bias = torch.full_like(armature, 0.05)
-        bias[wheel_ids].fill_(0.0)  # no bias for wheels
+        bias[:, len(leg_ids) :].fill_(0.0)  # no bias for wheels
         env_ids = torch.arange(env.unwrapped.num_envs, device=env.unwrapped.device)
         time_lag = torch.full((len(env_ids),), 5, dtype=torch.long, device=env.unwrapped.device)
         env.reset()
@@ -163,11 +167,7 @@ def main(argv: list[str] | None = None):
                 drive_indices = torch.as_tensor(drive_indices, dtype=torch.long, device=joint_ids.device)
             comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
             if not torch.all(comparison_matrix.sum(dim=0) == 1):
-                warnings.warn(
-                    "Each joint in actuator {drive_type!r} must occur exactly once in joint_order.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+                raise ValueError(f"Each joint in actuator {drive_type!r} must occur exactly once in joint_order.")
             drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
             actuator.update_time_lags(time_lag)
             actuator.update_encoder_bias(bias[:, drive_joint_idx])
@@ -177,9 +177,16 @@ def main(argv: list[str] | None = None):
 
         # Create a chirp signal for each action dimension
         duration = args_cli.duration  # seconds
-        sample_rate = 1 / env.unwrapped.sim.get_physics_dt()  # Hz
-        num_steps = int(duration * sample_rate)
-        t = torch.linspace(0, duration, steps=num_steps, device=env.unwrapped.device)
+        import math
+
+        dt = env.unwrapped.step_dt
+        ratio = duration / dt
+        if not math.isfinite(ratio) or ratio < 1 or abs(ratio - round(ratio)) > 1e-9:
+            raise ValueError("duration must be a positive integer multiple of control dt")
+        if not 0 < args_cli.min_frequency <= args_cli.max_frequency < 0.5 / dt:
+            raise ValueError("Invalid chirp frequencies or Nyquist limit")
+        num_steps = round(ratio)
+        t = torch.arange(num_steps, device=env.unwrapped.device, dtype=torch.float64) * dt
         f0 = args_cli.min_frequency  # Hz
         f1 = args_cli.max_frequency  # Hz
 
@@ -200,7 +207,8 @@ def main(argv: list[str] | None = None):
             * leg_trajectory_scale.unsqueeze(0)
         )
 
-        if env_cfg.sim2real.wheel_order is not None:
+        wheel_trajectory = None
+        if wheels_order:
             wheel_trajectory = torch.zeros((num_steps, len(wheel_ids)), device=env.unwrapped.device)
             wheel_trajectory[:, :] = chirp_signal.unsqueeze(-1)
             wheel_trajectory_directions = torch.tensor([1.0, 1.0, 1.0, 1.0], device=env.unwrapped.device)
@@ -212,68 +220,91 @@ def main(argv: list[str] | None = None):
             )
 
         articulation.write_joint_position_to_sim_index(
-            position=(leg_trajectory[0, leg_ids].unsqueeze(0) + bias[:, leg_ids]).contiguous(),
+            position=(leg_trajectory[0].unsqueeze(0) + bias[:, : len(leg_ids)]).contiguous(),
             joint_ids=leg_ids,
             env_ids=env_ids,
         )
         articulation.write_joint_velocity_to_sim_index(
-            velocity=torch.zeros_like(bias), joint_ids=joint_ids, env_ids=env_ids
+            velocity=torch.zeros_like(bias),
+            joint_ids=joint_ids,
+            env_ids=env_ids,
         )
+        collected = collect_trajectory(env, leg_trajectory, wheel_trajectory, bias[:, : len(leg_ids)])
 
-        counter = 0
-        # simulate environment
-        dof_pos_buffer = torch.zeros(num_steps, len(joint_ids), device=env.unwrapped.device)
-        dof_target_pos_buffer = torch.zeros(num_steps, len(joint_ids), device=env.unwrapped.device)
-        time_data = t
-        sim = env.unwrapped.sim
-        while sim.is_running():
-            # run everything in inference mode
-            with torch.inference_mode():
-                # compute actions
-                dof_pos_buffer[counter, :] = articulation.data.joint_pos.torch[0, joint_ids] - bias[0]
-                actions = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
-                actions = trajectory[counter % num_steps, :].unsqueeze(0).repeat(env.unwrapped.num_envs, 1)
-                # apply actions
-                obs, _, _, _, _ = env.step(actions)
-                dof_target_pos_buffer[counter, :] = articulation.actuators.target_command.position.torch[0, joint_ids]
-                counter += 1
-                if counter % 400 == 0:
-                    print(f"[INFO]: Step {counter / sample_rate} seconds")
-                if counter >= num_steps:
-                    break
+    data_dir.mkdir(parents=True, exist_ok=True)
+    # Serialize completely before replacing a previous successful collection.
+    import tempfile
 
-    from time import sleep
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=data_dir, delete=False) as stream:
+            temporary = stream.name
+            torch.save(collected, stream)
+        os.replace(temporary, data_dir / "chirp_data.pt")
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.unlink(temporary)
+    if args_cli.plot:
+        import matplotlib.pyplot as plt
 
-    sleep(1)  # wait a bit for everything to settle
-
-    (data_dir).mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "time": time_data.cpu(),
-            "dof_pos": dof_pos_buffer.cpu(),
-            "des_dof_pos": dof_target_pos_buffer.cpu(),
-        },
-        data_dir / "chirp_data.pt",
-    )
-
-    import matplotlib.pyplot as plt
-
-    for i in range(len(joint_ids)):
-        plt.figure()
-        plt.plot(t.cpu().numpy(), dof_pos_buffer[:, i].cpu().numpy(), label=f"{joint_order[i]} pos")
-        plt.plot(
-            t.cpu().numpy(),
-            dof_target_pos_buffer[:, i].cpu().numpy(),
-            label=f"{joint_order[i]} target",
-            linestyle="dashed",
-        )
-        plt.title(f"Joint {joint_order[i]} Trajectory")
-        plt.xlabel("Time [s]")
-        plt.ylabel("Joint position [rad]")
-        plt.grid()
-        plt.legend()
-        plt.tight_layout()
+        groups = [(legs_order, "dof_pos", "rad")]
+        if wheels_order:
+            groups.append((wheels_order, "dof_vel", "rad/s"))
+        for names, field, unit in groups:
+            for i, name in enumerate(names):
+                _, axis = plt.subplots()
+                axis.plot(collected["time"], collected[field][:, i], label="Measured")
+                axis.plot(collected["time"], collected["des_" + field][:, i], label="Desired (before delay)")
+                axis.set(title=name, xlabel="Time [s]", ylabel=f"Joint [{unit}]")
+                axis.legend()
         plt.show()
+
+
+def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
+    """Record aligned pre-step states/commands through the real ActionManager."""
+    base = getattr(env, "unwrapped", env)
+    legs, wheels = resolve_joint_groups(base.cfg.sim2real)
+    mapping = resolve_action_mapping(base, legs, wheels)
+    robot = base.scene["robot"]
+    if base.cfg.sim.use_newton_actuators:
+        raise ValueError("Collection requires Python PACE actuators")
+    count = len(leg_trajectory)
+    if count < 1 or (wheels and (wheel_trajectory is None or len(wheel_trajectory) != count)):
+        raise ValueError("Trajectory lengths do not match joint groups")
+    recorded = {"time": [], "dof_pos": [], "des_dof_pos": []}
+    if wheels:
+        recorded.update(dof_vel=[], des_dof_vel=[])
+    origin = base._sim_step_counter
+    for k in range(count):
+        if not base.sim.is_running():
+            raise RuntimeError("Simulation closed before collection completed")
+        elapsed = (base._sim_step_counter - origin) * base.physics_dt
+        if abs(elapsed - k * base.step_dt) > 1e-7 + 1e-5 * k * base.step_dt:
+            raise RuntimeError("Simulation time reset or diverged")
+        pos = leg_trajectory[k].float().expand(base.num_envs, -1)
+        vel = wheel_trajectory[k].float().expand(base.num_envs, -1) if wheels else None
+        actions = pack_actions(mapping, pos, vel)
+        q = robot.data.joint_pos.torch[:, mapping["leg_ids"]] - bias
+        v = robot.data.joint_vel.torch[:, mapping["wheel_ids"]]
+        if not torch.isfinite(q).all() or not torch.isfinite(v).all():
+            raise RuntimeError("Nonfinite collection response")
+        recorded["time"].append(elapsed)
+        recorded["dof_pos"].append(q[0].detach().cpu().clone())
+        recorded["des_dof_pos"].append(pos[0].detach().cpu().clone())
+        if wheels:
+            assert vel is not None
+            recorded["dof_vel"].append(v[0].detach().cpu().clone())
+            recorded["des_dof_vel"].append(vel[0].detach().cpu().clone())
+        with torch.inference_mode():
+            result = env.step(actions)
+        if len(result) == 5 and (torch.as_tensor(result[2]).any() or torch.as_tensor(result[3]).any()):
+            raise RuntimeError("Environment terminated/reset during collection")
+        if not torch.isfinite(robot.data.joint_pos.torch).all() or not torch.isfinite(robot.data.joint_vel.torch).all():
+            raise RuntimeError("Nonfinite state after collection step")
+    return {
+        key: torch.tensor(value, dtype=torch.float64) if key == "time" else torch.stack(value).float()
+        for key, value in recorded.items()
+    }
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -282,7 +313,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
     )
-    parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
+    parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to simulate.")
     parser.add_argument("--task", type=str, default=None, help="Name of the task.")
     parser.add_argument(
         "--max_steps", type=int, default=None, help="Number of environment steps to run. Runs unbounded when omitted."
@@ -295,7 +326,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--duration", type=float, default=20.0, help="Duration of the chirp signal in seconds.")
 
-    add_video_args(parser, action="the diffdrive agent run")
+    parser.add_argument("--plot", action="store_true", help="Plot collected joint responses after saving.")
+    add_video_args(parser, action="the collection run")
     add_launcher_args(parser)
     # let task configs select the simulation device and keep checkpoint-free agents on the kitless default path
     parser.set_defaults(device=None, visualizer=["newton_gl"])

@@ -179,7 +179,7 @@ IsaacLab determines joint ordering via breadth-first traversal, which may differ
 
 PACE normalizes optimization parameters to the range [-1, 1]. However, the physically meaningful parameter limits are defined via `bounds_params`, which constrains the sampling domain of the CMA-ES optimizer.
 
-The parameters are laid out as:
+For this pure-leg example (L=J), parameters are laid out as:
 
 * Armature: `[0 : n_joints]`
 * Viscous friction: `[n_joints : 2*n_joints]`
@@ -299,7 +299,7 @@ Once data collection is complete and stored in the correct directory, launch the
 
 ```bash
 cd ~/pace-sim2real
-python scripts/pace/fit.py --headless --num_envs=4096 --task=Isaac-Pace-Anymal-D-v0
+python scripts/pace/fit.py --visualizer none --num_envs=2 --task=Isaac-Pace-Anymal-D-v0
 ```
 
 This process utilizes the `CMAESOptimizer` located at:
@@ -321,7 +321,7 @@ pace-sim2real/logs/pace/anymal_d_sim
 Key files include:
 
 * `config.pt`: full configuration and dataset metadata
-* `best_trajectory.pt`: best simulated joint trajectory
+* `best_result.pt` (paired evaluated parameters and response groups): best simulated joint trajectory
 * `mean_xxx.pt`: mean parameter estimates per iteration
 
 If logging of the full optimization process is enabled:
@@ -381,3 +381,8 @@ Use the following procedure:
 ---
 
 This concludes the complete workflow for creating a custom PACE environment and performing evolutionary system identification. Adjust parameters iteratively based on observed performance and physical plausibility to achieve optimal sim-to-real alignment.
+
+
+### Mixed-joint contract update
+
+The position-only examples above describe the legacy pure-leg case. For mixed tasks use leg_order/wheel_order and the current [usage contract](../usage.md#mixed-positionvelocity-identification): parameter count is3*(L+W)+L+1, wheel errors use velocity, only legs have encoder bias, loss uses configurable normalized group means, and primary results pair evaluated parameters with their responses. Do not use distribution means as response provenance. Historical timing requires explicit real interval; measurement-only native-bias data requires recollection. Preserve current classes and task structure when adapting these examples.

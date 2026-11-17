@@ -1,0 +1,265 @@
+{
+  "comparison_base": "ecefbfe",
+  "authorization": "implement skill; review base explicitly confirmed by user",
+  "full_suite": {
+    "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q",
+    "result": "86 passed, 2 upstream cmaes small-population warnings in 15.59s"
+  },
+  "typecheck": {
+    "command": "uvx --offline pyright --pythonpath .venv/bin/python scripts/pace src/pace_sim2real/optim/cma_es.py src/pace_sim2real/utils src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py tests/test_mixed_collection_fit.py",
+    "result": "0 errors, 0 warnings"
+  },
+  "resource_limits": {
+    "smoke_envs": 2,
+    "optimization_envs": 4,
+    "steps_per_rollout": 40,
+    "max_generations": 20,
+    "wall_seconds_per_process": 120,
+    "available_ram_floor_gib": 4,
+    "sequential": true
+  },
+  "runs": {
+    "newton_smoke": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "newton",
+          "smoke",
+          "/tmp/pace-cr2-implement-newton-smoke"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 11.003,
+        "stop_reason": null
+      },
+      "result": {
+        "backend": "newton",
+        "optimization": false,
+        "num_envs": 2,
+        "steps": 40,
+        "initial_score": 0.0,
+        "best_score": 0.0,
+        "position_rmse": 0.0,
+        "velocity_rmse": 0.0,
+        "result": "/tmp/pace-cr2-implement-newton-smoke/26_11_17_15-31-39-550161/best_result.pt"
+      }
+    },
+    "newton_optimize": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "newton",
+          "optimize",
+          "/tmp/pace-cr2-implement-newton-optimize"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 18.005,
+        "stop_reason": null
+      },
+      "result": {
+        "backend": "newton",
+        "optimization": true,
+        "num_envs": 4,
+        "steps": 40,
+        "truth_checks": {
+          "truth": {
+            "score": 0.0,
+            "position_rmse": 0.0,
+            "velocity_rmse": 0.0
+          },
+          "perturbed": {
+            "score": 0.277431647702857,
+            "position_rmse": 0.051272458151497745,
+            "velocity_rmse": 0.7431247744765457
+          }
+        },
+        "initial_score": 0.008568803779780865,
+        "best_score": 0.0001487882205843732,
+        "position_rmse": 0.001511659289214002,
+        "velocity_rmse": 0.01718404281192524,
+        "result": "/tmp/pace-cr2-implement-newton-optimize/26_11_17_15-34-10-520661/best_result.pt"
+      }
+    },
+    "newton_decimation": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "newton",
+          "decimation",
+          "/tmp/pace-cr2-implement-newton-decimation"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 11.003,
+        "stop_reason": null
+      },
+      "result": {
+        "backend": "newton",
+        "decimation": 2,
+        "physics_steps": 40,
+        "compute_calls": 40,
+        "delay_steps": 2
+      }
+    },
+    "physx_smoke": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "physx",
+          "smoke",
+          "/tmp/pace-cr2-implement-physx-smoke"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 10.003,
+        "stop_reason": null
+      },
+      "result": {
+        "backend": "physx",
+        "optimization": false,
+        "num_envs": 2,
+        "steps": 40,
+        "initial_score": 0.0,
+        "best_score": 0.0,
+        "position_rmse": 0.0,
+        "velocity_rmse": 0.0,
+        "result": "/tmp/pace-cr2-implement-physx-smoke/26_11_17_15-32-32-550440/best_result.pt"
+      }
+    },
+    "physx_optimize": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "physx",
+          "optimize",
+          "/tmp/pace-cr2-implement-physx-optimize"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 12.003,
+        "stop_reason": null
+      },
+      "result": {
+        "backend": "physx",
+        "optimization": true,
+        "num_envs": 4,
+        "steps": 40,
+        "truth_checks": {
+          "truth": {
+            "score": 0.0,
+            "position_rmse": 0.0,
+            "velocity_rmse": 0.0
+          },
+          "perturbed": {
+            "score": 0.2772347186801585,
+            "position_rmse": 0.05123601664072426,
+            "velocity_rmse": 0.7428622402297134
+          }
+        },
+        "initial_score": 0.008567070588469505,
+        "best_score": 7.651021209868479e-05,
+        "position_rmse": 0.003711124676933303,
+        "velocity_rmse": 0.011800338038786273,
+        "result": "/tmp/pace-cr2-implement-physx-optimize/26_11_17_15-35-06-368887/best_result.pt"
+      }
+    },
+    "physx_decimation": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "physx",
+          "decimation",
+          "/tmp/pace-cr2-implement-physx-decimation"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 8.003,
+        "stop_reason": null
+      },
+      "result": {
+        "backend": "physx",
+        "decimation": 2,
+        "physics_steps": 40,
+        "compute_calls": 40,
+        "delay_steps": 2
+      }
+    },
+    "x5_cli": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection.py",
+          "--task",
+          "Isaac-Pace-Sevnce-X5-v0",
+          "--num_envs",
+          "2",
+          "--duration",
+          ".1",
+          "--visualizer",
+          "none",
+          "physics=newton_mjwarp"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 20.005,
+        "stop_reason": null
+      }
+    },
+    "x5_fitcli": {
+      "execution": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/scripts/pace/fit.py",
+          "--task",
+          "Isaac-Pace-Sevnce-X5-v0",
+          "--num_envs",
+          "2",
+          "--visualizer",
+          "none",
+          "physics=newton_mjwarp",
+          "env.sim2real.cmaes.max_iteration=1"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 28.009,
+        "stop_reason": null
+      }
+    }
+  },
+  "native_roundtrip": {
+    "time": [
+      4
+    ],
+    "dof_pos": [
+      4,
+      12
+    ],
+    "des_dof_pos": [
+      4,
+      12
+    ],
+    "dof_vel": [
+      4,
+      4
+    ],
+    "des_dof_vel": [
+      4,
+      4
+    ],
+    "original_time": [
+      4
+    ]
+  },
+  "precommit": "Black, flake8, isort and applicable hygiene checks passed; codespell flags existing HAA joint identifiers; insert-license skipped due pre-existing missing .github/LICENSE_HEADER.txt",
+  "limitations": [
+    "No full-scale X5 physical parameter recovery claim",
+    "CR1 manual GUI acceptance remains pending",
+    "Population2 emits cmaes divide-by-zero warnings; population4 controlled acceptance passes",
+    "No backend equivalence claim"
+  ],
+  "implementation_sha256": {
+    "tests/test_mixed_collection_fit.py": "463ea48d2a000bdde7cc86c84922e698e84b22aba984a24b2e3adb3700a36f14",
+    "scripts/pace/data_collection.py": "f9ddc70ba0f25f7fe8ca26c823498e1eca0249f40f262644f4f8517f89120a7a",
+    "scripts/pace/fit.py": "bd39629ad628bd3149e37e4eef1950faf0065a3293ea1a37a806f7ebe8e25f81",
+    "src/pace_sim2real/optim/cma_es.py": "eb17f3516a9957c4a397431fc4ce6234b310f67b33e41836f94f3859ce95e133"
+  }
+}
