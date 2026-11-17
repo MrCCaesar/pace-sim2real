@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import cmaes
+import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
@@ -152,14 +153,25 @@ class CMAESOptimizer:
         return values if params.ndim > 1 else values[0]
 
     def _reset_population(self):
-        self.params = torch.stack(
-            [torch.as_tensor(self.ask(), device=self.device, dtype=torch.float32) for _ in range(self.population_size)]
+        # CMA runs on CPU; transfer one population instead of each candidate separately.
+        self.params = torch.as_tensor(
+            np.stack([self.ask() for _ in range(self.population_size)]), device=self.device, dtype=torch.float32
         )
         self.sim_params = self._params_to_sim_params(self.params)
 
+    @torch.inference_mode()
     def tell(self, sim_dof_pos, real_dof_pos, *, sim_dof_vel=None, real_dof_vel=None):
-        if self.scores_counter >= self.num_samples:
-            raise ValueError("More samples than reference trajectory")
+        """Accumulate a sample [P,J] or trajectory chunk [P,T,J].
+
+        Validate the complete chunk before changing buffers. Batched input keeps
+        host synchronization and double-precision reduction outside simulation loops.
+        """
+        if sim_dof_pos.ndim not in (2, 3):
+            raise ValueError("Response shape must be [population, joints] or [population, samples, joints]")
+        batched = sim_dof_pos.ndim == 3
+        count = sim_dof_pos.shape[1] if batched else 1
+        if count < 1 or self.scores_counter + count > self.num_samples:
+            raise ValueError("More samples than reference trajectory or empty response")
         population, num_legs, num_wheels = self.population_size, len(self.leg_order), len(self.wheel_order)
         groups = [(sim_dof_pos, real_dof_pos, num_legs)]
         if num_wheels:
@@ -167,25 +179,26 @@ class CMAESOptimizer:
         elif any(x is not None and x.numel() for x in (sim_dof_vel, real_dof_vel)):
             raise ValueError("Pure-position task received wheel data")
         for simulated, measured, width in groups:
-            if (
-                simulated is None
-                or measured is None
-                or simulated.shape != (population, width)
-                or measured.shape != (population, width)
-            ):
+            expected = (population, count, width) if batched else (population, width)
+            if simulated is None or measured is None or simulated.shape != expected or measured.shape != expected:
                 raise ValueError("Response shape must match population and joint group")
             if simulated.device != self.device or measured.device != self.device:
                 raise ValueError("Response device must match optimizer")
-            if not torch.isfinite(simulated).all() or not torch.isfinite(measured).all():
+            if not (torch.isfinite(simulated).all() & torch.isfinite(measured).all()):
                 raise ValueError("Nonfinite response")
-        q = sim_dof_pos - self.sim_params[:, self.bias_idx]
-        self.sim_dof_pos_buffer[:, self.scores_counter] = q
-        self.squared_errors[:, 0] += (q.double() - real_dof_pos.double()).square().mean(dim=1)
+        samples = slice(self.scores_counter, self.scores_counter + count)
+        q = sim_dof_pos if batched else sim_dof_pos.unsqueeze(1)
+        measured_q = real_dof_pos if batched else real_dof_pos.unsqueeze(1)
+        q = q - self.sim_params[:, None, self.bias_idx]
+        self.sim_dof_pos_buffer[:, samples] = q
+        self.squared_errors[:, 0] += (q.double() - measured_q.double()).square().mean(dim=2).sum(dim=1)
         if num_wheels:
             assert sim_dof_vel is not None and real_dof_vel is not None
-            self.sim_dof_vel_buffer[:, self.scores_counter] = sim_dof_vel
-            self.squared_errors[:, 1] += (sim_dof_vel.double() - real_dof_vel.double()).square().mean(dim=1)
-        self.scores_counter += 1
+            v = sim_dof_vel if batched else sim_dof_vel.unsqueeze(1)
+            measured_v = real_dof_vel if batched else real_dof_vel.unsqueeze(1)
+            self.sim_dof_vel_buffer[:, samples] = v
+            self.squared_errors[:, 1] += (v.double() - measured_v.double()).square().mean(dim=2).sum(dim=1)
+        self.scores_counter += count
 
     def evolve(self):
         if self.scores_counter != self.num_samples:
@@ -200,20 +213,28 @@ class CMAESOptimizer:
         if not torch.isfinite(self.scores).all():
             raise ValueError("Nonfinite objective")
         self.scores_buffer[self.iteration_counter] = self.scores
-        index = int(self.scores.argmin())
-        if self.best_result is None or self.scores[index].item() < self.best_result["score"]:
-            self.best_result = self._result(index, means)
+        # Logging and the CPU CMA implementation share one completed-generation transfer.
+        statistics = torch.cat((means, self.scores[:, None]), dim=1).cpu()
+        host_means, host_scores = statistics[:, :2], statistics[:, 2]
+        index = int(host_scores.argmin())
+        best_score = float(host_scores[index])
+        self._relative_spread = float(
+            (host_scores.max() - host_scores.min()) / host_scores.min().abs().clamp_min(1e-12)
+        )
+        if self.best_result is None or best_score < self.best_result["score"]:
+            self.best_result = self._result(index, host_means, best_score)
             self._atomic_save(self.best_result, self.log_dir / "best_result.pt")
         if self.save_optimization_process:
             self.sim_params_buffer.append(self.sim_params.detach().cpu().clone())
-        self.writer.add_scalar("score/best", self.scores[index].item(), self.iteration_counter)
-        self.writer.add_scalar("error/position_rmse_rad", means[index, 0].sqrt().item(), self.iteration_counter)
+        self.writer.add_scalar("score/best", best_score, self.iteration_counter)
+        self.writer.add_scalar("error/position_rmse_rad", host_means[index, 0].sqrt().item(), self.iteration_counter)
         if self.wheel_order:
-            self.writer.add_scalar("error/velocity_rmse_rad_s", means[index, 1].sqrt().item(), self.iteration_counter)
-        if self.optimizer is not None:
-            self.optimizer.tell(
-                [(self.params[i].cpu().numpy(), self.scores[i].item()) for i in range(self.population_size)]
+            self.writer.add_scalar(
+                "error/velocity_rmse_rad_s", host_means[index, 1].sqrt().item(), self.iteration_counter
             )
+        if self.optimizer is not None:
+            parameters = self.params.cpu().numpy()
+            self.optimizer.tell(list(zip(parameters, host_scores.tolist(), strict=True)))
         if self.save_interval > 0 and self.iteration_counter % self.save_interval == 0:
             mean = (
                 torch.as_tensor(self.optimizer._mean, device=self.device)
@@ -224,15 +245,16 @@ class CMAESOptimizer:
                 self._params_to_sim_params(mean).cpu(), self.log_dir / f"mean_{self.iteration_counter:03d}.pt"
             )
         print(
-            f"Generation {self.iteration_counter}: best score={self.scores[index].item():.6g}; position"
-            f" RMSE={means[index, 0].sqrt().item():.6g} rad; velocity RMSE={means[index, 1].sqrt().item():.6g} rad/s"
+            f"Generation {self.iteration_counter}: best score={best_score:.6g}; position"
+            f" RMSE={host_means[index, 0].sqrt().item():.6g} rad; velocity"
+            f" RMSE={host_means[index, 1].sqrt().item():.6g} rad/s"
         )
         self.iteration_counter += 1
         self.scores_counter = 0
         self.squared_errors.zero_()
         self._reset_population()
 
-    def _result(self, index, means):
+    def _result(self, index, means, score):
         params = self.sim_params[index].detach().cpu().clone()
         delay = float(params[self.delay_idx])
         names = [f"{kind}:{n}" for kind in ("armature", "damping", "friction") for n in self.joint_order]
@@ -251,10 +273,10 @@ class CMAESOptimizer:
             original_time=self.data.get("original_time", self.data["time"]).double(),
             reference={k: v for k, v in self.data.items() if k != "original_time"},
             sim_dof_pos=self.sim_dof_pos_buffer[index].detach().cpu().clone(),
-            score=self.scores[index].item(),
+            score=score,
             position_rmse=means[index, 0].sqrt().item(),
             velocity_rmse=means[index, 1].sqrt().item() if self.wheel_order else None,
-            settings=self.settings,
+            settings=dict(self.settings),
             delay_candidate=delay,
             delay_steps=math.floor(delay),
             delay_seconds=math.floor(delay) * self.settings.get("physics_dt", 0.0),
@@ -266,10 +288,9 @@ class CMAESOptimizer:
     def finished(self):
         if not self.iteration_counter:
             return False
-        spread = (self.scores.max() - self.scores.min()) / self.scores.min().abs().clamp_min(1e-12)
         if self.iteration_counter >= self.max_iteration:
             self.stop_reason = "max_iteration"
-        elif self.epsilon is not None and spread < self.epsilon:
+        elif self.epsilon is not None and self._relative_spread < self.epsilon:
             self.stop_reason = "relative_spread"
         return self.stop_reason is not None
 

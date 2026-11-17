@@ -132,46 +132,55 @@ def main(argv: list[str] | None = None):
         fit_reference(env, data, opt)
 
 
+@torch.inference_mode()
 def fit_reference(env, data, opt):
-    """Replay validated reference data and evaluate candidates through ActionManager."""
+    """Replay prepacked commands and score each completed rollout as one batch."""
     base = getattr(env, "unwrapped", env)
     if base.cfg.sim.use_newton_actuators:
         raise ValueError("Fitting requires Python PACE actuators")
     legs, wheels = resolve_joint_groups(base.cfg.sim2real)
     mapping = resolve_action_mapping(base, legs, wheels)
     robot = base.scene["robot"]
-    device = base.device
-    reference = {key: value.to(device) for key, value in data.items()}
-    batch = base.num_envs
-    initial = reference["dof_pos"][0].expand(batch, -1)
-    velocity = reference["dof_vel"][0].expand(batch, -1) if wheels else None
+    # Clock checks use host scalars; never read one timestamp from CUDA per step.
+    timestamps = data["time"].detach().cpu().tolist()
+    reference = {key: value.to(base.device) for key, value in data.items() if key not in ("time", "original_time")}
+    batch, count = base.num_envs, len(timestamps)
+    measured_positions = reference["dof_pos"].unsqueeze(0).expand(batch, -1, -1)
+    measured_velocities = reference["dof_vel"].unsqueeze(0).expand(batch, -1, -1) if wheels else None
+    initial = measured_positions[:, 0]
+    initial_velocity = measured_velocities[:, 0] if measured_velocities is not None else None
     actions = pack_actions(mapping, reference["des_dof_pos"], reference.get("des_dof_vel"))
     actions = actions.unsqueeze(1).expand(-1, batch, -1)
+    # Reuse full-state buffers across generations; include the post-step final state.
+    positions = torch.empty((count + 1, batch, robot.num_joints), device=base.device)
+    velocities = torch.empty_like(positions)
     while True:
         env.reset()
-        opt.update_simulator(robot, mapping["leg_ids"] + mapping["wheel_ids"], initial, initial_wheel_velocity=velocity)
+        opt.update_simulator(
+            robot, mapping["leg_ids"] + mapping["wheel_ids"], initial, initial_wheel_velocity=initial_velocity
+        )
         origin = base._sim_step_counter
-        for k in range(len(reference["time"])):
+        for step, timestamp in enumerate(timestamps):
             if not base.sim.is_running():
                 raise RuntimeError("Simulation closed before fitting completed")
             elapsed = (base._sim_step_counter - origin) * base.physics_dt
-            if abs(elapsed - float(reference["time"][k])) > 1e-7 + 1e-5 * abs(elapsed):
+            if abs(elapsed - timestamp) > 1e-7 + 1e-5 * abs(elapsed):
                 raise ValueError("Reference time does not match actual simulation time")
-            with torch.inference_mode():
-                opt.tell(
-                    robot.data.joint_pos.torch[:, mapping["leg_ids"]],
-                    reference["dof_pos"][k].expand(batch, -1),
-                    sim_dof_vel=robot.data.joint_vel.torch[:, mapping["wheel_ids"]] if wheels else None,
-                    real_dof_vel=reference["dof_vel"][k].expand(batch, -1) if wheels else None,
-                )
-                result = env.step(actions[k])
-            if len(result) == 5 and (torch.as_tensor(result[2]).any() or torch.as_tensor(result[3]).any()):
+            positions[step].copy_(robot.data.joint_pos.torch)
+            velocities[step].copy_(robot.data.joint_vel.torch)
+            result = env.step(actions[step])
+            if len(result) == 5 and (result[2] | result[3]).any():
                 raise RuntimeError("Environment terminated/reset during fitting")
-            if (
-                not torch.isfinite(robot.data.joint_pos.torch).all()
-                or not torch.isfinite(robot.data.joint_vel.torch).all()
-            ):
-                raise RuntimeError("Nonfinite fitting state")
+        positions[-1].copy_(robot.data.joint_pos.torch)
+        velocities[-1].copy_(robot.data.joint_vel.torch)
+        if not (torch.isfinite(positions).all() & torch.isfinite(velocities).all()):
+            raise RuntimeError("Nonfinite fitting state")
+        opt.tell(
+            positions[:-1, :, mapping["leg_ids"]].permute(1, 0, 2),
+            measured_positions,
+            sim_dof_vel=velocities[:-1, :, mapping["wheel_ids"]].permute(1, 0, 2) if wheels else None,
+            real_dof_vel=measured_velocities,
+        )
         opt.evolve()
         if opt.finished():
             break

@@ -222,3 +222,7 @@ The exact ecefbfe collector cannot run (undefined trajectory and obsolete actuat
 ### Kitless CLI fix — User authorized
 
 After the installed Isaac Sim package triggered EULA during generic launcher argument registration, user explicitly prohibited Isaac Lab source changes and authorized a project-local fix. Collection/fit register CLI flags locally and never access KitLauncher just to parse them. Keep Isaac Lab's preset resolution and launch_simulation runtime selection. Do not set EULA acceptance automatically in production. Newton parsing must work with isaacsim imports forbidden; explicit PhysX/Kit selections must still parse, and runtime Kit import occurs only after selection.
+
+### Fitting performance follow-up — User authorized
+
+User requested the same ecefbfe-baseline throughput/readability requirements for fit.py and cma_es.py. Keep current physics, initialization, grouping, weighting, best-pair contract and standalone single-sample tell support. Execute simulation with contiguous state buffers and evaluate completed rollouts in batches; validate full states including the last step before evolution. Batch population and generation CPU/device transfers. Record exact benchmark workload/adaptations and avoid claiming universal or unmodified end-to-end performance from an adapted reference loop.

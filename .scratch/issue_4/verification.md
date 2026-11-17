@@ -236,3 +236,28 @@ User explicitly prohibited Isaac Lab source changes. The aborted external edit l
 Existing user edits to ANYmal/X5 configuration files were neither changed nor included in this fix.
 
 Kitless fix two-axis review: Spec found no material compatibility issue; Standards found no material code issue and requested fuller helper-interface documentation. The shared-helper table now records defaults, in-place registration, return type and argparse duplicate-option behavior.
+
+### fit.py / cma_es.py throughput follow-up
+
+User requested the same pre-implementation ecefbfe comparison and readable/extensible code as collection. `fit_reference` now keeps timestamps on CPU, copies contiguous full states and calls `tell` on completed trajectory chunks. The optimizer retains single-sample calls, validates chunks before mutation, computes float64 group errors in bulk, transfers candidates/statistics in batches and snapshots best-result settings. Initialization, shared-delay cadence, group objective and paired-output rules remain unchanged. Extra full-state buffers require8*(N+1)*P*J bytes; all samples/environments and post-step final states are validated before scoring/evolution, while termination remains immediate.
+
+Performance: CUDA, 12 position joints, 2 candidates, 400 samples, 3 generations, one warm-up pair followed by five alternating measured pairs. Synchronization occurs at timing boundaries. Exact scripts and raw durations are retained in cr2-implement-results.json.
+
+| Workload | Baseline median | Current median | Current / baseline |
+| --- | --- | --- | --- |
+| Exact ecefbfe CMA class vs current class | .200980 s | .032495 s | .161683 |
+| ANYmal Newton fit replay adapter | 1.430824 s | 1.296856 s | .906370 |
+
+CMA measurement includes tell/evolve/finished/close, real TensorBoard logging and saves, excluding constructors. Original summed-joint scores are divided by12 only for comparison to the approved current mean objective; all generation scores match within declared tolerance. Raw timings have noticeable host/I/O variation, so the median improvement is workload-specific, not a guaranteed speedup factor.
+
+The real fit adapter uses the original ecefbfe step loop and unmodified old tell, but shares current parameter initialization and evolve with the new path to support installed writer APIs and maintain approved normalized/measured-frame paired results. It includes reset, parameter writes, simulation, scoring, generation evolution and close/saves; excludes environment/optimizer construction and reference collection. Scores (rtol5e-5/atol1e-6), best parameters and best trajectories match. This is **not** an unchanged ecefbfe complete application benchmark or a universal all-backend claim. The actual original CMA class is evaluated separately above.
+
+Commands: `uv run python /tmp/pace-cma-benchmark.py`; `uv run python /tmp/pace-fit-benchmark-runner.py newton fit-perf`. Real fit experiment exit0 in31.008s, two environments,120s/4GiB watchdog. GPU-only CMA test completed normally without simulator launch. Preflight RAM15533MiB/GPU22659MiB free; no concurrent simulations.
+
+Two-backend mixed regression: existing bounded runtime `tests/test_mixed_collection_fit.py <backend> optimize <output>` invoked sequentially,4candidates/20generations/40steps and120s/4GiB watchdog. Newton exit0/16.005s, score .00856880378→.00014878822 (98.26% lower); PhysX exit0/11.003s, .00856707059→.00007651021 (99.11% lower). Truth beats perturbation in both groups and saved response errors recompute correctly. Process-only EULA setting remains explicitly authorized for these tests.
+
+New public-boundary tests: hand-computed batched mixed loss and matching best trajectory, invalid batch rejection before mutation; real optimizer with deterministic external environment verifies pre-step scoring and rejects transient/final NaN in another environment, immediate termination and clock resets before evolution or output creation. Existing single-step and partial-failure tests remain.
+
+Independent Standards and Spec reviewers found no material issue. They requested explicit batch/memory documentation and bounded benchmark claims, recorded above. User changes to collection, task configs and the fit data path are preserved and excluded from the performance patch.
+
+Final checks: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run python -m pytest -q` —94passed,2 existing upstream cmaes warnings,26.60s; targeted Pyright0. Formatting hooks corrected test formatting on the first pass; applicable changed-file hooks passed on recheck (existing missing license-template skip remains).

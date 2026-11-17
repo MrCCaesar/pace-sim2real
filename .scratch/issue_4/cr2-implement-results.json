@@ -449,5 +449,154 @@
       }
     },
     "resources": "2 envs, 4 steps each, sequential, 120s and 4GiB RAM watchdog; preflight RAM16164MiB GPU22674MiB"
+  },
+  "fitting_performance": {
+    "base": "ecefbfe",
+    "authorization": "User requested fit.py and cma_es.py performance matching collection requirements",
+    "full_suite": "94 passed, 2 existing upstream cmaes warnings in 26.60s",
+    "typecheck": "0 errors, 0 warnings",
+    "cma": {
+      "base": "ecefbfe",
+      "scope": "Original CMAESOptimizer class vs current; 3 generations, tell/evolve/finished/close and real logging/saves included; constructors excluded; warmup pair excluded",
+      "num_envs": 2,
+      "joints": 12,
+      "samples": 400,
+      "generations": 3,
+      "timings_seconds": {
+        "baseline": [
+          0.16555310797411948,
+          0.20097966794855893,
+          0.1463712239637971,
+          0.2382835280150175,
+          0.3822374870069325
+        ],
+        "current": [
+          0.032495088991709054,
+          0.020627570105716586,
+          0.020280744065530598,
+          0.12801739701535553,
+          0.14609874796587974
+        ]
+      },
+      "medians": {
+        "baseline": 0.20097966794855893,
+        "current": 0.032495088991709054
+      },
+      "normalized_scores_match": true,
+      "current_over_baseline": 0.1616834644190288
+    },
+    "fit": {
+      "base": "ecefbfe",
+      "scope": "ANYmal Newton; original fit loop + exact old tell; current initialization/evolve shared for supported writers and paired contract; constructor excluded, reset/parameter writes/replay/scoring/evolve/close included",
+      "num_envs": 2,
+      "samples": 400,
+      "generations": 3,
+      "timings_seconds": {
+        "baseline": [
+          1.4577436239924282,
+          1.4538300599670038,
+          1.409575665020384,
+          1.4235936609329656,
+          1.4308242150582373
+        ],
+        "current": [
+          1.3000559869688004,
+          1.2674785759299994,
+          1.3048830110346898,
+          1.2968556090490893,
+          1.2792588309384882
+        ]
+      },
+      "medians": {
+        "baseline": 1.4308242150582373,
+        "current": 1.2968556090490893
+      },
+      "normalized_scores_params_trajectories_match": true,
+      "current_over_baseline": 0.9063696262620945
+    },
+    "sources": {
+      "pace-cma-benchmark.py": "import importlib.util,json,time,statistics,contextlib\nfrom pathlib import Path\nimport torch\nROOT=Path('/home/sevnce-mr/pace-sim2real')\ndef load(name,path):\n spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m\nold=load('old_cma','/tmp/pace-cma-ecefbfe.py');new=load('new_cma',ROOT/'src/pace_sim2real/optim/cma_es.py')\nN,P,J,G=400,2,12,3\nbounds=torch.tensor([[.01,.1]]*49,device='cuda:0');bounds[-1]=torch.tensor([0.,10.],device='cuda:0')\ndata={'time':torch.arange(N,dtype=torch.float64)*.0025,'dof_pos':torch.zeros(N,J),'des_dof_pos':torch.zeros(N,J)}\nq=(torch.sin(torch.arange(N,device='cuda:0')*.02)*.1).reshape(1,N,1).expand(P,-1,J).contiguous();r=torch.zeros_like(q)\ntimings={'baseline':[],'current':[]};histories={}\nfor repeat in range(6):\n order=[('baseline',old),('current',new)]\n if repeat%2:order.reverse()\n for name,module in order:\n  opt=module.CMAESOptimizer(bounds,P,f'/tmp/pace-cma-perf/{repeat}-{name}',[f'j{i}' for i in range(J)],G,data,'cuda:0',save_interval=0)\n  torch.cuda.synchronize();start=time.perf_counter()\n  for generation in range(G):\n   if name=='baseline':\n    for k in range(N):opt.tell(q[:,k],r[:,k])\n   else:opt.tell(q,r)\n   opt.evolve();opt.finished()\n  opt.close();torch.cuda.synchronize();elapsed=time.perf_counter()-start\n  if repeat:timings[name].append(elapsed)\n  histories[name]=opt.scores_buffer.cpu()/(J if name=='baseline' else 1)\n torch.testing.assert_close(histories['baseline'],histories['current'],rtol=2e-5,atol=1e-7)\nresult={'base':'ecefbfe','scope':'Original CMAESOptimizer class vs current; 3 generations, tell/evolve/finished/close and real logging/saves included; constructors excluded; warmup pair excluded','num_envs':P,'joints':J,'samples':N,'generations':G,'timings_seconds':timings,'medians':{k:statistics.median(v) for k,v in timings.items()},'normalized_scores_match':True}\nresult['current_over_baseline']=result['medians']['current']/result['medians']['baseline'];Path('/tmp/pace-cma-benchmark-result.json').write_text(json.dumps(result,indent=2)+'\\n');print('RESULT',json.dumps(result))\n",
+      "pace-fit-benchmark.py": "import importlib.util,json,time,statistics,sys\nfrom pathlib import Path\nimport torch\nROOT=Path('/home/sevnce-mr/pace-sim2real')\ndef load(name,path):\n spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);return m\ncollection=load('collection',ROOT/'scripts/pace/data_collection.py');fit=load('fitting',ROOT/'scripts/pace/fit.py');old=load('old_cma','/tmp/pace-cma-ecefbfe.py')\nfrom pace_sim2real.optim import CMAESOptimizer\noriginal_collect=collection.collect_trajectory\n\ndef collect_and_benchmark(env,legs,wheels,bias):\n data=original_collect(env,legs,wheels,bias)\n assert wheels is None\n base=env.unwrapped;robot=base.scene['robot'];names,_=collection.resolve_joint_groups(base.cfg.sim2real)\n mapping=collection.resolve_action_mapping(base,names,())\n ids=torch.tensor(mapping['leg_ids'],device=base.device);count=len(data['time']);batch=base.num_envs;J=len(names)\n bounds=torch.tensor([[.08,.12]]*J+[[4.,5.]]*J+[[.03,.07]]*J+[[.04,.06]]*J+[[4.,6.]])\n @torch.inference_mode()\n def baseline(opt):\n  # ecefbfe fit loop / unmodified tell; adapt removed simulator writers via current initializer.\n  # Current evolve is shared to preserve approved normalization and paired output for fair replay.\n  measured=data['dof_pos'].to(base.device);target=data['des_dof_pos'].to(base.device)\n  initial=measured[0].unsqueeze(0).repeat(batch,1)\n  while True:\n   env.reset();opt.update_simulator(robot,ids,initial);opt.scores.zero_()\n   for counter in range(count):\n    if not base.sim.is_running():raise RuntimeError('closed')\n    old.CMAESOptimizer.tell(opt,robot.data.joint_pos.torch[:,ids],measured[counter].unsqueeze(0).repeat(batch,1))\n    actions=torch.zeros(env.action_space.shape,device=base.device)\n    actions[:,mapping['columns']]=target[counter].unsqueeze(0).repeat(batch,1)\n    env.step(actions)\n   # Translate old summed-joint loss/raw response into the approved mean/measured-frame contract.\n   opt.squared_errors[:,0]=opt.scores/J\n   opt.sim_dof_pos_buffer.sub_(opt.sim_params[:,None,opt.bias_idx])\n   opt.evolve()\n   if opt.finished():break\n  return opt.get_best_sim_params()\n timings={'baseline':[],'current':[]};records={}\n for repeat in range(6):\n  order=['baseline','current']\n  if repeat%2:order.reverse()\n  for name in order:\n   opt=CMAESOptimizer(bounds,batch,f'/tmp/pace-fit-perf/{repeat}-{name}',names,3,data,base.device,save_interval=0,reference_settings={'physics_dt':base.physics_dt,'reference_delay_mode':'command'})\n   torch.cuda.synchronize();start=time.perf_counter()\n   if name=='baseline':baseline(opt)\n   else:fit.fit_reference(env,data,opt)\n   opt.close();torch.cuda.synchronize();elapsed=time.perf_counter()-start\n   if repeat:timings[name].append(elapsed)\n   records[name]={'scores':opt.scores_buffer.cpu(),'result':opt.best_result}\n  torch.testing.assert_close(records['baseline']['scores'],records['current']['scores'],rtol=5e-5,atol=1e-6)\n  torch.testing.assert_close(records['baseline']['result']['params'],records['current']['result']['params'])\n  torch.testing.assert_close(records['baseline']['result']['sim_dof_pos'],records['current']['result']['sim_dof_pos'])\n result={'base':'ecefbfe','scope':'ANYmal Newton; original fit loop + exact old tell; current initialization/evolve shared for supported writers and paired contract; constructor excluded, reset/parameter writes/replay/scoring/evolve/close included','num_envs':batch,'samples':count,'generations':3,'timings_seconds':timings,'medians':{k:statistics.median(v) for k,v in timings.items()},'normalized_scores_params_trajectories_match':True}\n result['current_over_baseline']=result['medians']['current']/result['medians']['baseline'];Path('/tmp/pace-fit-benchmark-result.json').write_text(json.dumps(result,indent=2)+'\\n');print('FIT_BENCHMARK',json.dumps(result))\n return data\ncollection.collect_trajectory=collect_and_benchmark\ncollection.main(['--task','Isaac-Pace-Anymal-D-v0','--num_envs','2','--duration','1.0','--visualizer','none'])\n",
+      "pace-fit-benchmark-runner.py": "import json,os,signal,subprocess,sys,time\nfrom pathlib import Path\nbackend,mode=sys.argv[1:]\nroot=Path('/home/sevnce-mr/pace-sim2real')\nprefix=Path(f'/tmp/pace-cr2-implement-{backend}-{mode}')\nos.environ.pop('OMNI_KIT_ACCEPT_EULA',None)\nstart=time.monotonic();reason=None\ncmd=[str(root/'.venv/bin/python'),'/tmp/pace-fit-benchmark.py']\nwith Path(str(prefix)+'.log').open('w') as log:\n proc=subprocess.Popen(cmd,cwd=root,env=dict(os.environ,OMP_NUM_THREADS='2',MKL_NUM_THREADS='2',PACE_ROOT='/tmp/pace-kitless-anymal'),stdout=log,stderr=subprocess.STDOUT,start_new_session=True)\n while proc.poll() is None:\n  mem=next(int(l.split()[1]) for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:'))\n  if mem<4*1024*1024:reason='RAM below 4 GiB'\n  if time.monotonic()-start>=120:reason='120 second deadline'\n  if reason:os.killpg(proc.pid,signal.SIGKILL);proc.wait();break\n  time.sleep(1)\nrecord={'command':cmd,'returncode':proc.returncode,'elapsed_seconds':round(time.monotonic()-start,3),'stop_reason':reason}\nPath(str(prefix)+'-run.json').write_text(json.dumps(record,indent=2)+'\\n')\nprint(json.dumps(record))\nprint('\\n'.join(Path(str(prefix)+'.log').read_text(errors='replace').splitlines()[-20:]))\n"
+    },
+    "baseline_extraction": "git show ecefbfe:src/pace_sim2real/optim/cma_es.py > /tmp/pace-cma-ecefbfe.py",
+    "runs": {
+      "newton": {
+        "process": {
+          "command": [
+            "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+            "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+            "newton",
+            "optimize",
+            "/tmp/pace-cr2-implement-newton-optimize"
+          ],
+          "returncode": 0,
+          "elapsed_seconds": 16.005,
+          "stop_reason": null
+        },
+        "result": {
+          "backend": "newton",
+          "optimization": true,
+          "num_envs": 4,
+          "steps": 40,
+          "truth_checks": {
+            "truth": {
+              "score": 0.0,
+              "position_rmse": 0.0,
+              "velocity_rmse": 0.0
+            },
+            "perturbed": {
+              "score": 0.2774316477028567,
+              "position_rmse": 0.05127245815149299,
+              "velocity_rmse": 0.7431247744765457
+            }
+          },
+          "initial_score": 0.008568803779780865,
+          "best_score": 0.00014878822058435735,
+          "position_rmse": 0.0015116592892035047,
+          "velocity_rmse": 0.01718404281192524,
+          "result": "/tmp/pace-cr2-implement-newton-optimize/26_11_17_17-52-45-531039/best_result.pt"
+        }
+      },
+      "physx": {
+        "process": {
+          "command": [
+            "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+            "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+            "physx",
+            "optimize",
+            "/tmp/pace-cr2-implement-physx-optimize"
+          ],
+          "returncode": 0,
+          "elapsed_seconds": 11.003,
+          "stop_reason": null
+        },
+        "result": {
+          "backend": "physx",
+          "optimization": true,
+          "num_envs": 4,
+          "steps": 40,
+          "truth_checks": {
+            "truth": {
+              "score": 0.0,
+              "position_rmse": 0.0,
+              "velocity_rmse": 0.0
+            },
+            "perturbed": {
+              "score": 0.2772347186801585,
+              "position_rmse": 0.05123601664072426,
+              "velocity_rmse": 0.7428622402297134
+            }
+          },
+          "initial_score": 0.008567070588469505,
+          "best_score": 7.651021209868479e-05,
+          "position_rmse": 0.003711124676933303,
+          "velocity_rmse": 0.011800338038786273,
+          "result": "/tmp/pace-cr2-implement-physx-optimize/26_11_17_17-53-51-997561/best_result.pt"
+        }
+      }
+    },
+    "review": "Both independent axes found no material defect; benchmark limitations and batch memory/interface documented",
+    "scope": "Performance measured for disclosed workloads only; current lifecycle shared by actual fit adapter. User collection/config/path edits excluded; IsaacLab unmodified."
   }
 }

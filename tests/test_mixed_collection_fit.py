@@ -694,3 +694,116 @@ assert "isaaclab_physx.app.kit_launcher" not in sys.modules
         [sys.executable, "-c", script], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=60
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_optimizer_accepts_batched_rollouts_with_the_same_group_objective(tmp_path):
+    optimizer = load_module("pace_batched_optimizer", "src/pace_sim2real/optim/cma_es.py")
+    data = {
+        "time": torch.tensor([0.0, 0.01], dtype=torch.float64),
+        "dof_pos": torch.zeros(2, 1),
+        "des_dof_pos": torch.zeros(2, 1),
+        "dof_vel": torch.zeros(2, 1),
+        "des_dof_vel": torch.zeros(2, 1),
+    }
+    bounds = torch.zeros(8, 2)
+    bounds[6] = 0.1
+    opt = optimizer.CMAESOptimizer(
+        bounds,
+        2,
+        str(tmp_path),
+        ["leg", "wheel"],
+        2,
+        data,
+        "cpu",
+        leg_order=["leg"],
+        wheel_order=["wheel"],
+        velocity_error_scale=2.0,
+    )
+    q = torch.tensor([[[1.1], [3.1]], [[2.1], [4.1]]])
+    v = torch.tensor([[[2.0], [4.0]], [[4.0], [6.0]]])
+    opt.tell(q, torch.zeros_like(q), sim_dof_vel=v, real_dof_vel=torch.zeros_like(v))
+    opt.evolve()
+    result = torch.load(opt.log_dir / "best_result.pt", weights_only=True)
+    assert result["score"] == pytest.approx(3.75)
+    assert result["position_rmse"] == pytest.approx(5**0.5)
+    assert result["velocity_rmse"] == pytest.approx(10**0.5)
+    torch.testing.assert_close(result["sim_dof_pos"], torch.tensor([[1.0], [3.0]]))
+    assert result["candidate_index"] == 0
+    q[1, -1] = float("nan")
+    with pytest.raises(ValueError, match="Nonfinite"):
+        opt.tell(q, torch.zeros_like(q), sim_dof_vel=v, real_dof_vel=torch.zeros_like(v))
+    assert opt.scores_counter == 0
+    opt.close()
+    assert torch.load(opt.log_dir / "best_result.pt", weights_only=True)["score"] == result["score"]
+
+
+def test_batched_fitting_rejects_invalid_rollouts_before_evolution(tmp_path):
+    import os
+    import subprocess
+
+    script = """
+import importlib.util
+from pathlib import Path
+from types import SimpleNamespace as NS
+import sys
+import torch
+from pace_sim2real.optim import CMAESOptimizer
+spec = importlib.util.spec_from_file_location("fit", "scripts/pace/fit.py")
+fit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fit)
+for fault in (None, "transient", "final", "termination", "clock"):
+    action_type = type("JointPositionAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
+    action = action_type()
+    action._joint_names, action.action_dim, action.cfg = ["leg"], 1, NS(asset_name="robot")
+    q, v = torch.zeros(2, 1), torch.zeros(2, 1)
+    drive = NS(joint_indices=slice(None), cfg=NS(delay_mode="command", max_delay=0),
+               update_encoder_bias=lambda value: None, update_time_lags=lambda value: None, reset=lambda ids: None)
+    robot = NS(num_joints=1, joint_names=["leg"], actuators={"leg": drive}, data=NS(
+        joint_pos=NS(torch=q), joint_vel=NS(torch=v),
+        default_joint_pos=NS(torch=torch.zeros_like(q)), default_joint_vel=NS(torch=torch.zeros_like(v))))
+    robot.write_joint_armature_to_sim_index = lambda **kwargs: None
+    robot.write_joint_friction_coefficient_to_sim_index = lambda **kwargs: None
+    robot.write_joint_position_to_sim_index = lambda position, **kwargs: q.copy_(position)
+    robot.write_joint_velocity_to_sim_index = lambda velocity, **kwargs: v.copy_(velocity)
+    env = NS(device="cpu", num_envs=2, step_dt=.01, physics_dt=.01, _sim_step_counter=0,
+        cfg=NS(sim2real=NS(leg_order=["leg"], wheel_order=[]), sim=NS(use_newton_actuators=False)),
+        scene={"robot": robot}, sim=NS(is_running=lambda: True),
+        action_manager=NS(active_terms=["leg"], get_term=lambda name: action))
+    def reset():
+        env._sim_step_counter = 0
+        q.zero_(); v.zero_()
+    def step(actions):
+        env._sim_step_counter += 1
+        q.fill_(env._sim_step_counter)
+        if (fault == "transient" and env._sim_step_counter == 1) or (fault == "final" and env._sim_step_counter == 2):
+            q[1, 0] = float("nan")
+        if fault == "clock": env._sim_step_counter = 0
+        return None, None, torch.tensor([fault == "termination", False]), torch.zeros(2, dtype=torch.bool), None
+    env.reset, env.step = reset, step
+    data = {"time": torch.tensor([0., .01], dtype=torch.float64), "dof_pos": torch.zeros(2, 1), "des_dof_pos": torch.zeros(2, 1)}
+    opt = CMAESOptimizer(torch.zeros(5, 2), 2, sys.argv[1], ["leg"], 1, data, "cpu")
+    try:
+        fit.fit_reference(env, data, opt)
+    except (ValueError, RuntimeError):
+        assert fault is not None
+        assert opt.iteration_counter == 0 and opt.best_result is None
+        assert not (opt.log_dir / "best_result.pt").exists()
+        if fault == "termination": assert env._sim_step_counter == 1
+    else:
+        assert fault is None
+        assert opt.best_result["score"] == .5
+        torch.testing.assert_close(opt.best_result["sim_dof_pos"], torch.tensor([[0.], [1.]]))
+    finally:
+        opt.close()
+"""
+    environment = dict(os.environ)
+    environment.pop("OMNI_KIT_ACCEPT_EULA", None)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
