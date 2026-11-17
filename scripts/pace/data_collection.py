@@ -344,7 +344,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
     )
-    parser.add_argument("--num_envs", type=int, default=2, help="Number of environments to simulate.")
+    parser.add_argument("--num_envs", type=int, default=1, help="Number of environments to simulate.")
     parser.add_argument("--task", type=str, default=None, help="Name of the task.")
     parser.add_argument(
         "--max_steps", type=int, default=None, help="Number of environment steps to run. Runs unbounded when omitted."
