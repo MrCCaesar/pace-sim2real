@@ -46,6 +46,8 @@ class SevnceX5PaceActionCfg:
         asset_name="robot",
         joint_names=[".*_hip_joint", ".*_thigh_joint", ".*_calf_joint"],
         scale=1.0,
+        offset=0.0,
+        clip=None,
         use_default_offset=False,
         preserve_order=True,
     )  # actions = absolute joint position targets
@@ -53,6 +55,8 @@ class SevnceX5PaceActionCfg:
         asset_name="robot",
         joint_names=[".*_foot_joint"],
         scale=1.0,
+        offset=0.0,
+        clip=None,
         use_default_offset=False,
         preserve_order=True,
     )  # actions = absolute wheel velocity targets

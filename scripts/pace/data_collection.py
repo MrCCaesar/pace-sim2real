@@ -196,12 +196,13 @@ def main(argv: list[str] | None = None):
         if not 0 < args_cli.min_frequency <= args_cli.max_frequency < 0.5 / dt:
             raise ValueError("Invalid chirp frequencies or Nyquist limit")
         num_steps = round(ratio)
-        t = torch.arange(num_steps, device=env.unwrapped.device, dtype=torch.float64) * dt
+        # Pre-step sample times in seconds: duration is the end of the last step.
+        sample_times = torch.arange(num_steps, device=env.unwrapped.device, dtype=torch.float64) * dt
         f0 = args_cli.min_frequency  # Hz
         f1 = args_cli.max_frequency  # Hz
 
         # Linear chirp: phase = 2*pi*(f0*t + (f1-f0)/(2*duration)*t^2)
-        phase = 2 * pi * (f0 * t + ((f1 - f0) / (2 * duration)) * t**2)
+        phase = 2 * pi * (f0 * sample_times + ((f1 - f0) / (2 * duration)) * sample_times**2)
         chirp_signal = torch.sin(phase)
 
         leg_trajectory = torch.zeros((num_steps, len(leg_ids)), device=env.unwrapped.device)
@@ -270,8 +271,15 @@ def main(argv: list[str] | None = None):
         plt.show()
 
 
+@torch.inference_mode()
 def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
-    """Record aligned pre-step states/commands through the real ActionManager."""
+    """Collect pre-step measurements on-device, then transfer completed data once.
+
+    Trajectories have shape [samples, joints]; bias is [environments, legs].
+    Commands are packed once. Only environment zero is saved, while invalid
+    state in any sample rejects the collection before saving; termination stops
+    immediately. Full-state buffers use 8 * (samples + 1) * environments * joints bytes.
+    """
     base = getattr(env, "unwrapped", env)
     legs, wheels = resolve_joint_groups(base.cfg.sim2real)
     mapping = resolve_action_mapping(base, legs, wheels)
@@ -279,42 +287,53 @@ def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
     if base.cfg.sim.use_newton_actuators:
         raise ValueError("Collection requires Python PACE actuators")
     count = len(leg_trajectory)
-    if count < 1 or (wheels and (wheel_trajectory is None or len(wheel_trajectory) != count)):
-        raise ValueError("Trajectory lengths do not match joint groups")
-    recorded = {"time": [], "dof_pos": [], "des_dof_pos": []}
-    if wheels:
-        recorded.update(dof_vel=[], des_dof_vel=[])
+    if count < 1:
+        raise ValueError("Collection requires at least one trajectory sample")
+    leg_targets = leg_trajectory.to(device=base.device, dtype=torch.float32)
+    if wheels and wheel_trajectory is None:
+        raise ValueError("Mixed collection requires wheel velocity targets")
+    wheel_targets = (
+        wheel_trajectory.to(device=base.device, dtype=torch.float32) if wheel_trajectory is not None else None
+    )
+    actions = pack_actions(mapping, leg_targets, wheel_targets)
+    if bias.shape != (base.num_envs, len(legs)) or bias.device != actions.device:
+        raise ValueError("Encoder bias must match environment/leg dimensions and device")
+    if not torch.isfinite(actions).all() or not torch.isfinite(bias).all():
+        raise ValueError("Collection targets and bias must be finite")
+    # Broadcasting shares identical commands across environments without repeated allocations.
+    actions = actions.unsqueeze(1).expand(-1, base.num_envs, -1)
+    # Copy contiguous states in the loop; gather named joints and check finiteness once.
+    # Include every environment and the final post-step state so no invalid sample is missed.
+    state_shape = (count + 1, base.num_envs, robot.num_joints)
+    positions = torch.empty(state_shape, device=base.device, dtype=torch.float32)
+    velocities = torch.empty_like(positions)
+    timestamps = []
     origin = base._sim_step_counter
-    for k in range(count):
+    for step in range(count):
         if not base.sim.is_running():
             raise RuntimeError("Simulation closed before collection completed")
         elapsed = (base._sim_step_counter - origin) * base.physics_dt
-        if abs(elapsed - k * base.step_dt) > 1e-7 + 1e-5 * k * base.step_dt:
+        if abs(elapsed - step * base.step_dt) > 1e-7 + 1e-5 * step * base.step_dt:
             raise RuntimeError("Simulation time reset or diverged")
-        pos = leg_trajectory[k].float().expand(base.num_envs, -1)
-        vel = wheel_trajectory[k].float().expand(base.num_envs, -1) if wheels else None
-        actions = pack_actions(mapping, pos, vel)
-        q = robot.data.joint_pos.torch[:, mapping["leg_ids"]] - bias
-        v = robot.data.joint_vel.torch[:, mapping["wheel_ids"]]
-        if not torch.isfinite(q).all() or not torch.isfinite(v).all():
-            raise RuntimeError("Nonfinite collection response")
-        recorded["time"].append(elapsed)
-        recorded["dof_pos"].append(q[0].detach().cpu().clone())
-        recorded["des_dof_pos"].append(pos[0].detach().cpu().clone())
-        if wheels:
-            assert vel is not None
-            recorded["dof_vel"].append(v[0].detach().cpu().clone())
-            recorded["des_dof_vel"].append(vel[0].detach().cpu().clone())
-        with torch.inference_mode():
-            result = env.step(actions)
-        if len(result) == 5 and (torch.as_tensor(result[2]).any() or torch.as_tensor(result[3]).any()):
+        timestamps.append(elapsed)
+        positions[step].copy_(robot.data.joint_pos.torch)
+        velocities[step].copy_(robot.data.joint_vel.torch)
+        result = env.step(actions[step])
+        if len(result) == 5 and (result[2] | result[3]).any():
             raise RuntimeError("Environment terminated/reset during collection")
-        if not torch.isfinite(robot.data.joint_pos.torch).all() or not torch.isfinite(robot.data.joint_vel.torch).all():
-            raise RuntimeError("Nonfinite state after collection step")
-    return {
-        key: torch.tensor(value, dtype=torch.float64) if key == "time" else torch.stack(value).float()
-        for key, value in recorded.items()
+
+    positions[-1].copy_(robot.data.joint_pos.torch)
+    velocities[-1].copy_(robot.data.joint_vel.torch)
+    if not (torch.isfinite(positions).all() & torch.isfinite(velocities).all()):
+        raise RuntimeError("Nonfinite collection state")
+    recorded = {
+        "time": torch.tensor(timestamps, dtype=torch.float64),
+        "dof_pos": (positions[:-1, 0, mapping["leg_ids"]] - bias[0]).cpu(),
+        "des_dof_pos": leg_targets.cpu(),
     }
+    if wheel_targets is not None:
+        recorded.update(dof_vel=velocities[:-1, 0, mapping["wheel_ids"]].cpu(), des_dof_vel=wheel_targets.cpu())
+    return recorded
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

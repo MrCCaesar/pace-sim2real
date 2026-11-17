@@ -202,3 +202,22 @@ User clarified that Newton automatic disablement is intentional. Configuration n
 These are Implement checks; formal Verify and user-owned physical/manual acceptance are not claimed complete.
 
 Post-fix real Newton collection/fit smoke: `OMNI_KIT_ACCEPT_EULA=YES OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python tests/test_mixed_collection_fit.py newton smoke /tmp/pace-cr2-implement-newton-smoke` — exit0, 11.003 s, 2 environments/40 steps, both truth RMSEs zero. Same resource watchdog applied. Prior PhysX and optimization evidence remains unchanged; no need to repeat unchanged dynamics trials.
+
+### User-requested collection simplification and throughput — Implement follow-up
+
+**Changes:** `data_collection.py` names its chirp vector `sample_times`; values remain `arange(N)*step_dt` seconds, while recorded timestamps use the actual simulation counter. Endpoint-inclusive `linspace(0,duration,N)` has interval duration/(N-1), not the actual control dt. Mapping/packing only resolve named columns, with a typed record; task configs explicitly own unit scale, zero offset and no clip. Collection and fitting prepack commands; collection copies contiguous states into device buffers and gathers/transfers once. Finite checks include every environment, intermediate sample and final state before returning; termination stops immediately. Full-state buffers cost 8*(N+1)*B*J bytes, approximately 1.95 MiB for 8000 samples, 2 environments, 16 joints.
+
+**Performance evidence:** original baseline commit `ecefbfe` cannot run unchanged (undefined `trajectory`, obsolete actuator target accessor). Temporary adapters preserve its preallocated buffers and per-step zeros/repeat commands while fixing these blockers. Same current X5 model/config/runtime is used for both loops. Timed scope includes command packing, buffer allocation, collection and final CPU transfer; excludes environment startup/reset, disk saving and plotting. Headless Newton, 2 environments, 400 samples, warm-up then 5 alternating repetitions; CUDA synchronized at timing boundaries. 120 s deadline / 4 GiB RAM watchdog; preflight 20026 MiB RAM / 22729 MiB GPU free.
+
+| Comparison | Baseline median | Current median | Current / baseline | Data check |
+| --- | --- | --- | --- | --- |
+| Original three-field loop adapter, fewer outputs | 0.558168 s | 0.520894 s | 0.93322 | leg measurements match |
+| Equivalent mixed five-field adapter | 0.572373 s | 0.526019 s | 0.91901 | all fields match |
+
+Commands: `.venv/bin/python /tmp/pace-original-benchmark-runner.py newton perf-original` and `.venv/bin/python /tmp/pace-benchmark-runner.py newton perf2`. Full source, raw repetitions, assumptions and results are retained in `cr2-implement-results.json` for reproduction after temporary files disappear. Initial intermediate implementation was 4.8% slower in the mixed comparison; it was rejected and replaced by the contiguous-buffer implementation above. These measurements support no regression for the measured workload, **not** an unmodified baseline pass, arbitrary workloads, all-backend performance or end-to-end application speed.
+
+**Regression checks:** `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q` — 91 passed, 2 existing upstream cmaes warnings, 20.87 s. Existing action-mapping test was first made to fail for old inverse-transform behavior, then passed with reordering-only behavior. New collector boundary test checks literal second timestamps, correct position/velocity/command alignment, another environment's transient/final NaN, clock reset, simulation close and immediate termination. Existing targeted Pyright command: 0 errors, 0 warnings. All applicable changed-file pre-commit hooks passed; license template exception unchanged.
+
+Real backend smoke commands (with process-only EULA acceptance, OMP/MKL threads=2) use `tests/test_mixed_collection_fit.py <backend> smoke <output>`: Newton exit0/11.003 s; PhysX exit0/8.003 s; both 2 environments/40 steps and zero truth RMSE for both groups. Runtime fixture now uses the explicitly supported identity action configuration, preserving reordered action columns. Earlier nonidentity compensation tests are superseded by the user amendment.
+
+**Review:** independent Standards and Spec reviewers found no remaining material issue. Spec reviewer inspected benchmark source/results and confirmed the limited performance claim above. Formal Verify remains a separate, user-authorized stage.

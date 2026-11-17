@@ -297,5 +297,112 @@
       "elapsed_seconds": 11.003,
       "stop_reason": null
     }
+  },
+  "collection_simplification": {
+    "authorization": "User requested config-owned action transforms, throughput >= ecefbfe and readable/extensible functions",
+    "full_suite": {
+      "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q",
+      "result": "91 passed, 2 upstream warnings in 20.87s"
+    },
+    "typecheck": "0 errors, 0 warnings; same targeted Pyright command",
+    "hooks": "All applicable changed-file pre-commit hooks passed; pre-existing missing license template skipped",
+    "memory_preflight": {
+      "ram_available_mib": 20026,
+      "gpu_free_mib": 22729
+    },
+    "benchmark_scope": "Warmed Newton X5, two environments, 400 steps, five alternating repetitions. Includes allocation, packing, loop, validation and CPU output; excludes simulator startup/reset, disk write and plotting. Current model/config used for both loops.",
+    "baseline_limit": "ecefbfe collector is not runnable as-is (undefined trajectory, obsolete actuator target access). Temporary loop adapters fix blockers; original three-field variant retains fewer outputs than current mixed collector. No claim for every backend or workload.",
+    "original_three_field_baseline": {
+      "base": "ecefbfe",
+      "adapter": "undefined trajectory fixed; obsolete actuator target accessor replaced by issued targets; original all-position buffers retained",
+      "num_envs": 2,
+      "samples": 400,
+      "timings_seconds": {
+        "baseline": [
+          0.5697991689667106,
+          0.5581682299962267,
+          0.5427514739567414,
+          0.5531476680189371,
+          0.5589043300133198
+        ],
+        "current": [
+          0.5208938249852508,
+          0.5242178909247741,
+          0.5153134969295934,
+          0.5174613340059295,
+          0.5267350960057229
+        ]
+      },
+      "medians": {
+        "baseline": 0.5581682299962267,
+        "current": 0.5208938249852508
+      },
+      "leg_measurements_match": true,
+      "baseline_saves": "original three fields, all position; fewer outputs than mixed collector",
+      "current_over_baseline": 0.9332201243140839
+    },
+    "mixed_five_field_baseline": {
+      "base": "ecefbfe",
+      "adapter": "undefined trajectory fixed; separate mixed response columns; obsolete actuator target accessor replaced by issued targets",
+      "num_envs": 2,
+      "samples": 400,
+      "timings_seconds": {
+        "baseline": [
+          0.5924344449304044,
+          0.5723732439801097,
+          0.5688314950093627,
+          0.5726484940387309,
+          0.5640135559951887
+        ],
+        "current": [
+          0.5275136119453236,
+          0.5253396639600396,
+          0.5260188499232754,
+          0.5306396899977699,
+          0.5202055190457031
+        ]
+      },
+      "medians": {
+        "baseline": 0.5723732439801097,
+        "current": 0.5260188499232754
+      },
+      "outputs_match": true,
+      "current_over_baseline": 0.9190136950943061
+    },
+    "benchmark_sources": {
+      "pace-collection-benchmark-original.py": "import importlib.util,json,time,statistics,sys\nfrom pathlib import Path\nimport torch\nROOT=Path('/home/sevnce-mr/pace-sim2real')\nspec=importlib.util.spec_from_file_location('collection_bench',ROOT/'scripts/pace/data_collection.py')\nmodule=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)\ncurrent=module.collect_trajectory\n\ndef compare(env,legs,wheels,bias):\n base=env.unwrapped; robot=base.scene['robot']\n leg_names,wheel_names=module.resolve_joint_groups(base.cfg.sim2real)\n mapping=module.resolve_action_mapping(base,leg_names,wheel_names)\n targets=module.pack_actions(mapping,legs,wheels)\n q0=robot.data.joint_pos.torch.clone();v0=robot.data.joint_vel.torch.clone()\n def restore():\n  env.reset()\n  robot.write_joint_position_to_sim_index(position=q0)\n  robot.write_joint_velocity_to_sim_index(velocity=v0)\n  for actuator in robot.actuators.values():actuator.reset()\n @torch.inference_mode()\n def baseline(env,legs,wheels,bias):\n  # ecefbfe loop: preallocated device buffers; per-step zeros/repeat; one final transfer.\n  # Runnable adapter fixes undefined trajectory, mixed channel IDs and removed target accessor.\n  count=len(legs);lid=mapping['leg_ids'];wid=mapping['wheel_ids'];ids=lid+wid\n  all_bias=torch.cat((bias[0],torch.zeros(len(wid),device=base.device)))\n  measured=torch.zeros((count,len(lid)+len(wid)),device=base.device)\n  desired=torch.zeros_like(measured)\n  for counter in range(count):\n   if not base.sim.is_running():raise RuntimeError('closed')\n   measured[counter]=robot.data.joint_pos.torch[0,ids]-all_bias\n   actions=torch.zeros(env.action_space.shape,device=base.device)\n   actions=targets[counter%count,:].unsqueeze(0).repeat(base.num_envs,1)\n   env.step(actions)\n   desired[counter]=actions[0]\n  return {'time':torch.linspace(0,len(legs)*base.step_dt,len(legs)).cpu(),'dof_pos':measured.cpu(),'des_dof_pos':desired.cpu()}\n timings={'baseline':[],'current':[]};last={}\n for name,fn in [('baseline',baseline),('current',current)]:\n  restore();fn(env,legs[:40],wheels[:40],bias)\n for repeat in range(5):\n  order=[('baseline',baseline),('current',current)]\n  if repeat%2:order.reverse()\n  for name,fn in order:\n   restore();torch.cuda.synchronize();start=time.perf_counter()\n   last[name]=fn(env,legs,wheels,bias)\n   torch.cuda.synchronize();timings[name].append(time.perf_counter()-start)\n torch.testing.assert_close(last['current']['dof_pos'],last['baseline']['dof_pos'][:,:len(leg_names)])\n result={'base':'ecefbfe','adapter':'undefined trajectory fixed; obsolete actuator target accessor replaced by issued targets; original all-position buffers retained','num_envs':base.num_envs,'samples':len(legs),'timings_seconds':timings,'medians':{key:statistics.median(value) for key,value in timings.items()},'leg_measurements_match':True,'baseline_saves':'original three fields, all position; fewer outputs than mixed collector'}\n result['current_over_baseline']=result['medians']['current']/result['medians']['baseline']\n Path('/tmp/pace-collection-benchmark-original-result.json').write_text(json.dumps(result,indent=2)+'\\n');print('BENCHMARK',json.dumps(result))\n return last['current']\nmodule.collect_trajectory=compare\nmodule.main(['--task','Isaac-Pace-Sevnce-X5-v0','--num_envs','2','--duration','1.0','--visualizer','none','physics=newton_mjwarp'])\n",
+      "pace-collection-benchmark.py": "import importlib.util,json,time,statistics,sys\nfrom pathlib import Path\nimport torch\nROOT=Path('/home/sevnce-mr/pace-sim2real')\nspec=importlib.util.spec_from_file_location('collection_bench',ROOT/'scripts/pace/data_collection.py')\nmodule=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)\ncurrent=module.collect_trajectory\n\ndef compare(env,legs,wheels,bias):\n base=env.unwrapped; robot=base.scene['robot']\n leg_names,wheel_names=module.resolve_joint_groups(base.cfg.sim2real)\n mapping=module.resolve_action_mapping(base,leg_names,wheel_names)\n targets=module.pack_actions(mapping,legs,wheels)\n q0=robot.data.joint_pos.torch.clone();v0=robot.data.joint_vel.torch.clone()\n def restore():\n  env.reset()\n  robot.write_joint_position_to_sim_index(position=q0)\n  robot.write_joint_velocity_to_sim_index(velocity=v0)\n  for actuator in robot.actuators.values():actuator.reset()\n @torch.inference_mode()\n def baseline(env,legs,wheels,bias):\n  # ecefbfe loop: preallocated device buffers; per-step zeros/repeat; one final transfer.\n  # Runnable adapter fixes undefined trajectory, mixed channel IDs and removed target accessor.\n  count=len(legs);lid=mapping['leg_ids'];wid=mapping['wheel_ids']\n  measured=torch.zeros((count,len(lid)+len(wid)),device=base.device)\n  desired=torch.zeros_like(measured)\n  for counter in range(count):\n   if not base.sim.is_running():raise RuntimeError('closed')\n   measured[counter,:len(lid)]=robot.data.joint_pos.torch[0,lid]-bias[0]\n   measured[counter,len(lid):]=robot.data.joint_vel.torch[0,wid]\n   actions=torch.zeros(env.action_space.shape,device=base.device)\n   actions=targets[counter%count,:].unsqueeze(0).repeat(base.num_envs,1)\n   env.step(actions)\n   desired[counter,:len(lid)]=legs[counter]\n   desired[counter,len(lid):]=wheels[counter]\n  return {'time':torch.arange(count,dtype=torch.float64)*base.step_dt,'dof_pos':measured[:,:len(lid)].cpu(),'dof_vel':measured[:,len(lid):].cpu(),'des_dof_pos':desired[:,:len(lid)].cpu(),'des_dof_vel':desired[:,len(lid):].cpu()}\n timings={'baseline':[],'current':[]};last={}\n for name,fn in [('baseline',baseline),('current',current)]:\n  restore();fn(env,legs[:40],wheels[:40],bias)\n for repeat in range(5):\n  order=[('baseline',baseline),('current',current)]\n  if repeat%2:order.reverse()\n  for name,fn in order:\n   restore();torch.cuda.synchronize();start=time.perf_counter()\n   last[name]=fn(env,legs,wheels,bias)\n   torch.cuda.synchronize();timings[name].append(time.perf_counter()-start)\n for key in last['current']:torch.testing.assert_close(last['current'][key],last['baseline'][key])\n result={'base':'ecefbfe','adapter':'undefined trajectory fixed; separate mixed response columns; obsolete actuator target accessor replaced by issued targets','num_envs':base.num_envs,'samples':len(legs),'timings_seconds':timings,'medians':{key:statistics.median(value) for key,value in timings.items()},'outputs_match':True}\n result['current_over_baseline']=result['medians']['current']/result['medians']['baseline']\n Path('/tmp/pace-collection-benchmark-result.json').write_text(json.dumps(result,indent=2)+'\\n');print('BENCHMARK',json.dumps(result))\n return last['current']\nmodule.collect_trajectory=compare\nmodule.main(['--task','Isaac-Pace-Sevnce-X5-v0','--num_envs','2','--duration','1.0','--visualizer','none','physics=newton_mjwarp'])\n",
+      "pace-original-benchmark-runner.py": "import json,os,signal,subprocess,sys,time\nfrom pathlib import Path\nbackend,mode=sys.argv[1:]\nroot=Path('/home/sevnce-mr/pace-sim2real')\nprefix=Path(f'/tmp/pace-cr2-implement-{backend}-{mode}')\nstart=time.monotonic();reason=None\ncmd=[str(root/'.venv/bin/python'),'/tmp/pace-collection-benchmark-original.py']\nwith Path(str(prefix)+'.log').open('w') as log:\n proc=subprocess.Popen(cmd,cwd=root,env=dict(os.environ,OMNI_KIT_ACCEPT_EULA='YES',OMP_NUM_THREADS='2',MKL_NUM_THREADS='2',PACE_ROOT='/tmp/pace-cr2-x5-cli'),stdout=log,stderr=subprocess.STDOUT,start_new_session=True)\n while proc.poll() is None:\n  mem=next(int(l.split()[1]) for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:'))\n  if mem<4*1024*1024:reason='RAM below 4 GiB'\n  if time.monotonic()-start>=120:reason='120 second deadline'\n  if reason:os.killpg(proc.pid,signal.SIGKILL);proc.wait();break\n  time.sleep(1)\nrecord={'command':cmd,'returncode':proc.returncode,'elapsed_seconds':round(time.monotonic()-start,3),'stop_reason':reason}\nPath(str(prefix)+'-run.json').write_text(json.dumps(record,indent=2)+'\\n')\nprint(json.dumps(record))\nprint('\\n'.join(Path(str(prefix)+'.log').read_text(errors='replace').splitlines()[-20:]))\n"
+    },
+    "smoke": {
+      "newton": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "newton",
+          "smoke",
+          "/tmp/pace-cr2-implement-newton-smoke"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 11.003,
+        "stop_reason": null
+      },
+      "physx": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+          "physx",
+          "smoke",
+          "/tmp/pace-cr2-implement-physx-smoke"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 8.003,
+        "stop_reason": null
+      }
+    },
+    "reviews": {
+      "standards": "No material findings",
+      "spec": "No material defects; performance evidence limited to disclosed adapted baseline and tested workload"
+    }
   }
 }

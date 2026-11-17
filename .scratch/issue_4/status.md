@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR2 Implement / Complete. #10–#13 implemented against approved Q11–Q23 and user-approved Newton warning/disablement clarification. Review base ecefbfe confirmed; both review axes resolved. Await explicit authorization for Verify. No push or tracker state changes.
+Current stage: CR2 Implement / Complete including user-requested collection simplification and performance follow-up. Action transforms belong to config; timestamps remain seconds; no regression measured against disclosed ecefbfe loop adapter. 91 tests passed, two-backend smoke passed, reviews resolved. Await user-approved Verify; no push/tracker writes.
 
 ## Delivery
 
@@ -89,3 +89,5 @@ CR2 publication complete: #10–#13 created and verified against approved bodies
 CR2 Implement checks: #10–#13 code implemented;86 tests passed with2 documented upstream population2 warnings; targeted Pyright0. Both backend ActionManager smoke, controlled20-generation fit (>50% objective reduction) and decimation2 delay checks passed. Native-to-fit format roundtrip and actual X5 collection/one-generation fit CLI passed. Details in verification.md and cr2-implement-results.json. User confirmed ecefbfe review base; preparing local implementation commit and mandatory two-axis review. No formal Verify transition or tracker changes.
 
 CR2 implementation review complete: 90 tests passed, Pyright0, short X5 collection rerun passed. Newton warns and strips ratio variables per user clarification; actuator coverage validation now precedes writes. Two independent reviewers confirmed no remaining material findings. Local implementation commit 2a3ddda plus follow-up fix commit; no push/issue edits. See verification.md and cr2-implement-results.json.
+
+Collection follow-up: removed action-transform handling, prepacked commands, typed mapping and contiguous device buffers with completed-data transfer. Newton X5 2env400step five-repeat median 0.558168→0.520894 seconds versus original three-field loop adapter (6.7% less time); equivalent mixed adapter outputs match. Original ecefbfe cannot run unchanged. Full suite91passed, Pyright0, both backend40step smoke passed. Reviewers confirmed no material findings. Detailed evidence and reproducible benchmark sources retained in cr2-implement-results.json.

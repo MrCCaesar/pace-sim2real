@@ -212,3 +212,9 @@ Q11–Q23 are explicitly resolved. Final consolidation and concrete interfaces a
 ### Implement clarification — Approved (2026-11-17)
 
 User explicitly clarified that Newton's automatic disablement is intentional: warn and disable dynamic-friction ratio identification, stripping its bounds so CMA does not allocate unused variables. This supersedes the earlier final-consolidation sentence requiring rejection. Direct optimizer calls that bypass configuration validation still reject unsupported ratio identification. PhysX behavior is unchanged.
+
+### Implement performance and simplicity amendment — Approved by user
+
+User requires collection throughput no worse than pre-implementation ecefbfe, readable/extensible functions and no scale/offset/clip processing in action mapping or packing. This supersedes the inverse-transform requirement in Q18 and the earlier final contract. Environment configs own these settings and explicitly use absolute-target defaults. Prepack commands outside both collection and fitting loops; preallocate device collection buffers and transfer completed data once. Validate all captured states plus final state before returning; termination remains immediate. Sample times use arange(N)*step_dt seconds, avoiding endpoint-inclusive linspace drift.
+
+The exact ecefbfe collector cannot run (undefined trajectory and obsolete actuator command access). Benchmark its loop with these blockers adapted, preserve its allocation/recording pattern, disclose all adaptations and compare under identical headless task/device/environment count. Report this limitation instead of claiming an unmodified baseline pass.

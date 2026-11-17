@@ -179,9 +179,9 @@ Add to existing CMAESOptimizerCfg: position_error_scale=1.0 rad, velocity_error_
 | resolve_joint_groups(cfg) | PaceCfg → tuple[tuple[str,...], tuple[str,...]] | normalize legacy pure-leg declaration; validate uniqueness/disjointness/combined order; ValueError on conflict |
 | load_reference_data(path, cfg, step_dt) | Path, resolved PaceCfg, float seconds → dict | safe tensor load, shape/finite/order/time/model checks; returns canonical data keys plus internal original_time and resolved declarations; FileNotFoundError/OSError for IO, ValueError for invalid contract |
 | resolve_action_mapping(env, leg_order, wheel_order) | launched environment and name sequences → mapping record | independently resolve articulation IDs and action term columns; reject missing/duplicate/type-incompatible/unknown action terms and ambiguous coverage |
-| pack_actions(mapping, desired_pos, desired_vel) | record; float Tensor[B,L], optional Tensor[B,W] → float Tensor[B,A] | convert physical targets using (desired-offset)/scale; resolved finite nonzero scale and actual offsets may be per-env; preserve device/dtype; reject shape/device mismatch and clipping that would alter targets |
+| pack_actions(mapping, desired_pos, desired_vel) | record; float Tensor[B,L], optional Tensor[B,W] → float Tensor[B,A] | reorder targets into action columns only; B may represent environments or trajectory samples; preserve values/device/dtype and reject shape/device mismatch; task configuration owns scale, offset and clipping (user amendment below) |
 
-Mapping record is internal, containing ordered articulation IDs, action columns, resolved scales/offsets and action dimension; no simulator state copies are exposed as a public model. Only supported absolute position and velocity action terms are accepted. Relative/delta-position, effort or unknown terms in the covered action vector fail explicitly. Native data collection does not import this helper.
+Mapping record is internal, containing ordered articulation IDs, action columns and group widths; no simulator state copies are exposed as a public model. Only supported absolute position and velocity action terms are accepted. Relative/delta-position, effort or unknown terms in the covered action vector fail explicitly. Native data collection does not import this helper.
 
 ### Tensor and timing rules
 
@@ -217,3 +217,9 @@ Save means/progress under existing names if already enabled, explicitly diagnost
 One new `tests/test_mixed_collection_fit.py` contains group/data/objective/result CPU tests and bounded backend integration tests, with runtime imports deferred and unavailable runtimes reported explicitly. Extend existing test_mujoco_collection.py for normalized centers and unified bias while preserving viewer/lifecycle tests. No production simulation runs during Specify; Q22 defines the later controlled verification budget.
 
 CR2 interface approval: Q23 explicitly approved this final concrete section, including exact configuration/signature/schema contracts and the two necessary new code/test files. Earlier Draft proposals are historical and subordinate to this section. Implementation and Plan are not authorized by this specification approval.
+
+### User-approved Implement amendment: action mapping and throughput
+
+The user explicitly removed action scale/offset/clip handling from mapping/pack_actions. This supersedes the Q18 inverse-transform portion. PACE task configs explicitly use scale=1, offset=0, clip=None and use_default_offset=False; helper does not inspect or compensate these settings. pack_actions accepts any batch size, enabling trajectory packing before collection/fit loops. Target finiteness belongs to collection preflight/reference loader.
+
+Collection uses contiguous full-state GPU buffers, gathers declared response columns after simulation and performs one completed-data transfer. Finiteness checks cover every environment, every sample and the final state before returning; automatic resets/termination still abort immediately. Buffer cost is 8*(N+1)*B*J bytes. Real timestamps remain pre-step seconds from the simulation counter.

@@ -4,6 +4,20 @@
 from __future__ import annotations
 
 from dataclasses import MISSING
+from typing import TYPE_CHECKING, TypedDict
+
+if TYPE_CHECKING:
+    import torch
+
+
+class ActionMapping(TypedDict):
+    """Joint measurement IDs and command columns; transforms belong to task config."""
+
+    leg_ids: list[int]
+    wheel_ids: list[int]
+    columns: list[int]
+    num_legs: int
+    num_wheels: int
 
 
 def resolve_joint_groups(cfg):
@@ -25,15 +39,13 @@ def resolve_joint_groups(cfg):
     return tuple(legs), tuple(wheels)
 
 
-def resolve_action_mapping(env, leg_order, wheel_order):
+def resolve_action_mapping(env, leg_order, wheel_order) -> ActionMapping:
     """Resolve installed absolute joint action terms without importing a simulator."""
-    import torch
-
     names = tuple(leg_order) + tuple(wheel_order)
     robot = env.scene["robot"]
     if any(robot.joint_names.count(n) != 1 for n in names):
         raise ValueError("Each controlled joint must exist exactly once in articulation")
-    columns, scales, offsets, clips = {}, [], [], []
+    columns = {}
     start = 0
     for key in env.action_manager.active_terms:
         term = env.action_manager.get_term(key)
@@ -50,59 +62,42 @@ def resolve_action_mapping(env, leg_order, wheel_order):
             if name not in expected or name in columns:
                 raise ValueError(f"Ambiguous or wrong-type action joint: {name}")
             columns[name] = start + index
-        shape = (env.num_envs, term.action_dim)
-        for value, destination in ((term._scale, scales), (term._offset, offsets)):
-            tensor = torch.as_tensor(value, device=env.device, dtype=torch.float32).expand(shape).clone()
-            if not torch.isfinite(tensor).all():
-                raise ValueError("Action scale/offset must be finite")
-            destination.append(tensor)
-        clip = getattr(term, "_clip", None) if term.cfg.clip is not None else None
-        clips.append(clip)
         start += term.action_dim
     if set(columns) != set(names):
         raise ValueError("Action terms must cover all declared joint groups exactly once")
-    scale = torch.cat(scales, dim=1)
-    if (scale == 0).any():
-        raise ValueError("Action scale must be nonzero")
     return {
         "leg_ids": [robot.joint_names.index(n) for n in leg_order],
         "wheel_ids": [robot.joint_names.index(n) for n in wheel_order],
         "columns": [columns[n] for n in names],
-        "scale": scale,
-        "offset": torch.cat(offsets, dim=1),
-        "clips": clips,
-        "term_dims": [x.shape[1] for x in scales],
         "num_legs": len(leg_order),
         "num_wheels": len(wheel_order),
     }
 
 
-def pack_actions(mapping, desired_pos, desired_vel=None):
-    """Pack physical targets into action columns, rejecting lossy clipping."""
-    import torch
+def pack_actions(
+    mapping: ActionMapping, desired_pos: torch.Tensor, desired_vel: torch.Tensor | None = None
+) -> torch.Tensor:
+    """Reorder a batch of targets into action columns without changing values.
 
-    scale, offset = mapping["scale"], mapping["offset"]
-    batch = scale.shape[0]
-    for target, count in ((desired_pos, mapping["num_legs"]), (desired_vel, mapping["num_wheels"])):
-        if count == 0 and target is None:
-            continue
-        if target is None or target.shape != (batch, count):
-            raise ValueError("Physical target shape does not match declared groups")
-        if target.device != scale.device or target.dtype != scale.dtype or not torch.isfinite(target).all():
-            raise ValueError("Physical targets must be finite and match action dtype/device")
-    desired = desired_pos if desired_vel is None else torch.cat((desired_pos, desired_vel), dim=1)
-    physical = torch.empty_like(scale)
-    physical[:, mapping["columns"]] = desired
-    start = 0
-    for size, clip in zip(mapping["term_dims"], mapping["clips"], strict=True):
-        if clip is not None:
-            values = physical[:, start : start + size]
-            if ((values < clip[:, :, 0]) | (values > clip[:, :, 1])).any():
-                raise ValueError("Action clipping would change physical targets")
-        start += size
-    actions = (physical - offset) / scale
-    if not torch.isfinite(actions).all():
-        raise ValueError("Action transform produced nonfinite values")
+    Task configuration owns scale, offset and clipping. PACE tasks use absolute
+    targets (unit scale, zero offset, no clipping). The batch can represent
+    environments or trajectory samples, allowing packing outside the step loop.
+    """
+    if desired_pos.ndim != 2 or desired_pos.shape[1] != mapping["num_legs"]:
+        raise ValueError("Position target shape does not match declared leg group")
+    batch = desired_pos.shape[0]
+    if mapping["num_wheels"]:
+        if desired_vel is None or desired_vel.shape != (batch, mapping["num_wheels"]):
+            raise ValueError("Velocity target shape does not match declared wheel group")
+    elif desired_vel is not None and desired_vel.shape != (batch, 0):
+        raise ValueError("Pure-leg tasks cannot have velocity targets")
+    if desired_vel is not None and (desired_vel.device != desired_pos.device or desired_vel.dtype != desired_pos.dtype):
+        raise ValueError("Position and velocity targets must share dtype/device")
+
+    actions = desired_pos.new_empty((batch, len(mapping["columns"])))
+    actions[:, mapping["columns"][: mapping["num_legs"]]] = desired_pos
+    if desired_vel is not None:
+        actions[:, mapping["columns"][mapping["num_legs"] :]] = desired_vel
     return actions
 
 

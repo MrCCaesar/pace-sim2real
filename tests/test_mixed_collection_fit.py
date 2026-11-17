@@ -34,7 +34,7 @@ def test_groups_preserve_declared_order_and_legacy_position_tasks():
         module.resolve_joint_groups(SimpleNamespace(leg_order=["a"], wheel_order=["w"], joint_order=["w", "a"]))
 
 
-def test_action_mapping_separates_columns_from_joint_ids_and_inverts_transforms():
+def test_action_mapping_only_reorders_targets_and_ignores_environment_transforms():
     module = contracts()
     # Exercise the installed action-term adapter without launching a runtime.
     position_type = type("JointPositionAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
@@ -49,7 +49,7 @@ def test_action_mapping_separates_columns_from_joint_ids_and_inverts_transforms(
     env = SimpleNamespace(action_manager=manager, scene={"robot": robot}, num_envs=1, device="cpu")
     mapping = module.resolve_action_mapping(env, ("a", "b"), ("w",))
     actions = module.pack_actions(mapping, torch.tensor([[1.5, -1.5]]), torch.tensor([[7.0]]))
-    torch.testing.assert_close(actions, torch.tensor([[2.0, 1.0, -0.5]]))
+    torch.testing.assert_close(actions, torch.tensor([[7.0, -1.5, 1.5]]))
     assert mapping["leg_ids"] == [1, 2]
     assert mapping["wheel_ids"] == [0]
     with pytest.raises(ValueError, match="shape"):
@@ -231,10 +231,10 @@ def run_backend_contract(backend, optimization, output, decimation=1):
             observations=SimpleNamespace(policy=observation),
             actions=SimpleNamespace(
                 wheel=mdp.JointVelocityActionCfg(
-                    asset_name="robot", joint_names=["wheel_joint"], scale=2.0, offset=0.5, use_default_offset=False
+                    asset_name="robot", joint_names=["wheel_joint"], scale=1.0, offset=0.0, use_default_offset=False
                 ),
                 leg=mdp.JointPositionActionCfg(
-                    asset_name="robot", joint_names=["leg_joint"], scale=-2.0, offset=0.3, use_default_offset=False
+                    asset_name="robot", joint_names=["leg_joint"], scale=1.0, offset=0.0, use_default_offset=False
                 ),
             ),
             seed=0,
@@ -594,3 +594,68 @@ for legs, wheels in [(12, 0), (12, 4)]:
         timeout=60,
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_collection_records_seconds_and_rejects_invalid_runs():
+    """Exercise the collector against a deterministic environment boundary in isolation."""
+    import os
+    import subprocess
+
+    script = """
+import importlib.util
+from types import SimpleNamespace as NS
+import torch
+spec = importlib.util.spec_from_file_location("collection", "scripts/pace/data_collection.py")
+collection = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(collection)
+for fault in (None, "nonfinite_sample", "nonfinite_final", "termination", "time_reset", "closed"):
+    position_type = type("JointPositionAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
+    velocity_type = type("JointVelocityAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
+    pos, vel = position_type(), velocity_type()
+    for term, name in ((pos, "leg"), (vel, "wheel")):
+        term._joint_names, term.action_dim, term.cfg = [name], 1, NS(asset_name="robot")
+    robot = NS(num_joints=2, joint_names=["wheel", "leg"], data=NS(
+        joint_pos=NS(torch=torch.tensor([[8., 10.], [8., 10.]])),
+        joint_vel=NS(torch=torch.tensor([[20., 30.], [20., 30.]]))))
+    env = NS(num_envs=2, device="cpu", step_dt=.01, physics_dt=.005, _sim_step_counter=0,
+             cfg=NS(sim2real=NS(leg_order=["leg"], wheel_order=["wheel"]), sim=NS(use_newton_actuators=False)),
+             scene={"robot": robot}, action_manager=NS(active_terms=["v", "p"], get_term=lambda name: {"v": vel, "p": pos}[name]))
+    env.sim = NS(is_running=lambda: not (fault == "closed" and env._sim_step_counter == 2))
+    commands = []
+    def step(actions):
+        commands.append(actions.clone())
+        env._sim_step_counter += 2
+        robot.data.joint_pos.torch.fill_(10 + len(commands))
+        robot.data.joint_vel.torch.fill_(20 + 2 * len(commands))
+        if fault == "nonfinite_sample" and len(commands) == 1:
+            robot.data.joint_pos.torch[1, 0] = float("nan")
+        if fault == "nonfinite_final" and len(commands) == 3:
+            robot.data.joint_vel.torch[1, 1] = float("nan")
+        if fault == "time_reset": env._sim_step_counter = 0
+        done = torch.tensor([fault == "termination", False])
+        return None, None, done, torch.zeros(2, dtype=torch.bool), None
+    env.step = step
+    try:
+        data = collection.collect_trajectory(env, torch.tensor([[1.], [2.], [3.]]),
+                                              torch.tensor([[4.], [5.], [6.]]), torch.full((2, 1), .25))
+    except RuntimeError:
+        assert fault is not None
+        if fault == "termination": assert len(commands) == 1
+    else:
+        assert fault is None
+        torch.testing.assert_close(data["time"], torch.tensor([0., .01, .02], dtype=torch.float64))
+        torch.testing.assert_close(data["dof_pos"], torch.tensor([[9.75], [10.75], [11.75]]))
+        torch.testing.assert_close(data["dof_vel"], torch.tensor([[20.], [22.], [24.]]))
+        torch.testing.assert_close(commands[0], torch.tensor([[4., 1.], [4., 1.]]))
+        assert set(data) == {"time", "dof_pos", "des_dof_pos", "dof_vel", "des_dof_vel"}
+        assert all(value.device.type == "cpu" for value in data.values())
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=dict(os.environ, OMNI_KIT_ACCEPT_EULA="YES"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

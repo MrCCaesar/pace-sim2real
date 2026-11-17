@@ -143,6 +143,8 @@ def fit_reference(env, data, opt):
     batch = base.num_envs
     initial = reference["dof_pos"][0].expand(batch, -1)
     velocity = reference["dof_vel"][0].expand(batch, -1) if wheels else None
+    actions = pack_actions(mapping, reference["des_dof_pos"], reference.get("des_dof_vel"))
+    actions = actions.unsqueeze(1).expand(-1, batch, -1)
     while True:
         env.reset()
         opt.update_simulator(robot, mapping["leg_ids"] + mapping["wheel_ids"], initial, initial_wheel_velocity=velocity)
@@ -160,12 +162,7 @@ def fit_reference(env, data, opt):
                     sim_dof_vel=robot.data.joint_vel.torch[:, mapping["wheel_ids"]] if wheels else None,
                     real_dof_vel=reference["dof_vel"][k].expand(batch, -1) if wheels else None,
                 )
-                actions = pack_actions(
-                    mapping,
-                    reference["des_dof_pos"][k].expand(batch, -1),
-                    reference["des_dof_vel"][k].expand(batch, -1) if wheels else None,
-                )
-                result = env.step(actions)
+                result = env.step(actions[k])
             if len(result) == 5 and (torch.as_tensor(result[2]).any() or torch.as_tensor(result[3]).any()):
                 raise RuntimeError("Environment terminated/reset during fitting")
             if (
