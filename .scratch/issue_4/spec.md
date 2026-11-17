@@ -1,6 +1,6 @@
 # Issue #4 — Specification
 
-Status: Approved as planning baseline by user request to enter Plan and split tasks from these documents, following Q8–Q10 confirmations.
+Baseline status: Approved as planning baseline by user request to enter Plan and split tasks from these documents, following Q8–Q10 confirmations.
 Requirements: requirements.md. Evidence: research.md. Contracts: interfaces.md.
 
 ## Confirmed scope
@@ -54,3 +54,58 @@ Plot only when requested, after saving: one figure of 12 leg position axes, anot
 ## Approval and delivery
 
 Q8 approved module/TOML separation; Q9 approved defaults, pre-integration sampling and integer-step duration; Q10 approved successful atomic replacement and failure preservation. User then explicitly entered Plan, Implement and Verify in sequence. This specification was implemented in 87da096; software acceptance evidence and physical limits are in verification.md.
+
+
+## CR1 — Specify / Approved decisions; ready for Plan handoff
+
+Stage approval: “进入 Specify 阶段”. User then explicitly approved Q7–Q9 and Q10–Q11. The CR1 contracts below amend baseline D1–D3 and the no-live-viewer scope; earlier sections retain the original delivery history. This does not authorize Plan or implementation.
+
+### Confirmed requirements
+
+CR1-R1: independent signs for all twelve position and four velocity channels. Leg target = direction * (center + amplitude * sin(phase)); wheel target = direction * amplitude * sin(phase). Directions affect commanded trajectories and signed leg initial centers/history, not measured coordinate conventions. Units, channel order, sensor bias/noise and five output tensors remain as defined in the baseline.
+
+CR1-R2: optional observation-only live 3D view, camera adjustment, approximately real-time viewing, independent of post-run plots. Closing its window continues collection. Explicitly requested viewer startup failure aborts without replacing the output. Existing Ctrl+C cancellation remains.
+
+### Approved decisions — Q7–Q9
+
+CR1-D1 / Q7: add optional position_directions (12 signs) and velocity_directions (4 signs) in [trajectory], each element strictly numeric +1 or -1 (bool rejected). Missing arrays default to all +1, preserving old TOML and Python-config callers; wrong length/value is an error. Provided TOML lists both arrays explicitly, initially all +1. No inferred left/right pattern. Existing required fields and unknown-key rejection stay in force.
+
+CR1-D2 / Q8: retain the standalone collector; isolate live viewing in a child process with its own model/data, receiving authoritative state one way. GUI-side control/physics edits never reach collection. See Accepted ADR 0003. The existing collect signature remains; viewer ownership/cleanup belongs to its run. Private helper boundaries, snapshots and timing are defined by Q10/Q11 below and interfaces.md.
+
+CR1-D3 / Q9: optional run.visualize boolean defaults false when absent; CLI --visualize / --no-visualize override it. Existing plot behavior and user-owned plot=true setting are preserved. Normal window close disables visualization and wall-clock pacing, and collection completes headlessly. Unexpected viewer failure after startup aborts collection with an actionable error and preserves old output, matching startup failure rather than silently hiding faults. KeyboardInterrupt cancels and cleans up both processes.
+
+### CR1 acceptance criteria
+
+- CR1-A1: independently signed leg/wheel targets match the approved formula; signed leg initial positions/control history match; all +1 preserves baseline results with identical seed/config. Measurements stay in native joint coordinates.
+- CR1-A2: invalid sign lengths/values/types fail before stepping; old configs retain baseline behavior; CLI override precedence is deterministic.
+- CR1-A3: visualization disabled requires no viewer/display initialization; visualization enabled leaves time grid, all five data fields and physics unchanged for fixed seed/config.
+- CR1-A4: window closure continues to N samples; startup failure, unexpected runtime failure and Ctrl+C clean up resources and preserve existing output.
+- CR1-A5: bounded native-viewer smoke test plus controlled failure/lifecycle tests; manually inspect camera interaction/window close. Synthetic evidence must not be described as manual GUI acceptance.
+
+### Q10–Q11 — Approved timing and process contracts
+
+Approval reference: user answered “10. yes 11. yes”. Q7–Q9 were approved separately. No unresolved product-design questions remain for this change.
+
+CR1-D4 / Q10 — Approved timing contract: limit display publication to 30 Hz; the first state is the initialized state before the first integration. Publish later snapshots after integration. Pace authoritative physics against a monotonic wall clock while the window is open. When behind, skip waits and stale display frames, never physics steps or measurements. Keep pending display data bounded to the latest snapshot and do not wait for a per-frame acknowledgment. Normal window close disables pacing. Approximately real time is best effort, not a performance guarantee. Render cadence is an internal constant initially, not an additional public configuration option.
+
+CR1-D5 / Q11 — Approved process contract: child loads the same resolved MJCF and receives copied mjSTATE_INTEGRATION snapshots (MuJoCo 3.17 API, exercised in E1), never aliases of authoritative arrays. Child refreshes derived display state without stepping authoritative physics. Separate lifecycle messages distinguish ready, normal-close and error; unexpected exit without an acknowledged normal-close is an error. Start collection only after ready. Startup deadline 10 s; graceful shutdown deadline 2 s, then terminate and wait 1 s, then kill and wait 1 s. Failure to reap within this bounded sequence is an actionable error; no dataset replacement. These are internal constants initially. KeyboardInterrupt uses the same cleanup sequence and retains CLI exit 130. Headless mode starts no viewer process and performs no real-time waits.
+
+Approved private module boundary (Q11): scripts/pace/mujoco_viewer.py owns the child entry point, lifecycle and state transport; mujoco_collection.py keeps all physics, measurements and data ownership. It is a private sibling helper, not a new public package API. No Isaac Lab import or package initialization is introduced. UI features that mutate physics are not exposed as collection controls; display-side edits never propagate back. Exact native rendering fidelity remains a manual acceptance check.
+
+### Traceability and verification obligations
+
+| Requirement | Design / interface | Required evidence |
+| --- | --- | --- |
+| CR1-R1 independent signs | CR1-D1; position_directions/velocity_directions | CR1-A1/A2: mixed-sign formula, signed initial state/history, invalid types/lengths, legacy-config and all-positive equivalence |
+| CR1-R2 observation isolation | CR1-D2; Accepted ADR 0003; private viewer helper | CR1-A3: same-seed output equality and display-copy mutation isolation; no viewer initialization when disabled |
+| CR1-R2 enable/close/failure | CR1-D3/D5; CLI flags and lifecycle | CR1-A4: normal close completes; startup error/timeout, unexpected exit and cancellation preserve output and reap child; escalation paths checked without long real-time sleeps |
+| CR1-R2 approximate real time | CR1-D4; latest-state publication and monotonic pacing | CR1-A5: controlled clock/slow display verifies bounded pending data, skipped frames but N steps, and no pacing after close |
+| Documentation and actual GUI | interfaces.md; examples and config | Bounded desktop smoke plus explicit manual camera/window-close result; clearly distinguish automated from human observation |
+
+Existing baseline A1–A8 still apply, with trajectory formulas extended by directions. Production tests must cover timeout/escalation paths not exercised by Research E2. Existing research probes are feasibility evidence, not implementation acceptance. No full-sweep physical acceptance is inferred.
+
+### Handoff
+
+Specify decisions Q7–Q11 are approved; interfaces.md consolidates their contracts. Implementation details that do not alter these contracts (transport primitive, private symbol names) can be chosen during implementation. No new user-facing options are implied. Next: Plan only after explicit user approval. User-owned collision/trajectory validity and future manual GUI verification remain acceptance boundaries, not unresolved design decisions.
+
+CR1 implementation update: #8/#9 implemented against approved contracts; automated and bounded native smoke evidence is in verification.md under implementation checks. Code review and formal Verify status are tracked in status.md.

@@ -4,6 +4,7 @@
 
 import importlib
 import sys
+import tomllib
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -16,10 +17,27 @@ sys.path.insert(0, str(ROOT / "scripts" / "pace"))
 from mujoco_collection import collect, load_config, save_data  # noqa: E402
 
 
+def config_file(tmp_path, **values):
+    """Isolate run options from the user's editable default configuration."""
+    import re
+
+    source = (ROOT / "config/x5_collection.toml").read_text()
+    source = source.replace(
+        "../src/pace_sim2real/assets/data/robots/sevnce/x5/mjcf/x5_calibration.xml",
+        str(ROOT / "src/pace_sim2real/assets/data/robots/sevnce/x5/mjcf/x5_calibration.xml"),
+    )
+    for key, value in {"plot": "false", "visualize": "false", **values}.items():
+        source = re.sub(rf"^{key} = .*", f"{key} = {value}", source, flags=re.MULTILINE)
+    path = tmp_path / "collection.toml"
+    path.write_text(source)
+    return path
+
+
 def test_load_default_config_without_isaaclab():
     cfg = load_config(ROOT / "config" / "x5_collection.toml")
     assert cfg.duration == 20.0
-    assert (cfg.min_frequency, cfg.max_frequency, cfg.seed, cfg.plot) == (0.1, 10.0, 42, False)
+    assert (cfg.min_frequency, cfg.max_frequency, cfg.seed) == (0.1, 10.0, 42)
+    assert cfg.plot == tomllib.loads((ROOT / "config/x5_collection.toml").read_text())["run"]["plot"]
     assert cfg.position_joints[:3] == ("FL_hip_joint", "FL_thigh_joint", "FL_calf_joint")
     assert cfg.velocity_joints[-1] == "RR_foot_joint"
     np.testing.assert_array_equal(cfg.position_centers[:3], [0, 0.4, -1.4])
@@ -140,7 +158,14 @@ def test_cli_saves_short_run_from_foreign_cwd_without_isaaclab_or_plotting(tmp_p
 
     output_root = tmp_path / "output"
     env = dict(os.environ, PACE_ROOT=str(output_root))
-    command = [sys.executable, str(ROOT / "scripts/pace/data_collection_mujoco.py"), "--duration", "0.01"]
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/pace/data_collection_mujoco.py"),
+        "--config",
+        str(config_file(tmp_path)),
+        "--duration",
+        "0.01",
+    ]
     completed = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
     data = torch.load(output_root / "data/x5_sim/chirp_data.pt", weights_only=True)
@@ -329,16 +354,16 @@ def test_disabled_plot_does_not_import_matplotlib_or_isaaclab(tmp_path):
 import builtins, sys
 real_import = builtins.__import__
 def guarded(name, *args, **kwargs):
-    if name.split('.')[0] in {'matplotlib', 'isaaclab', 'pace_sim2real'}:
+    if name.split('.')[0] in {'matplotlib', 'isaaclab', 'pace_sim2real', 'mujoco_viewer'}:
         raise AssertionError('Unexpected import: ' + name)
     return real_import(name, *args, **kwargs)
 builtins.__import__ = guarded
 sys.path.insert(0, sys.argv[1])
 from data_collection_mujoco import main
-raise SystemExit(main(['--duration', '0.0025']))
+raise SystemExit(main(['--config', sys.argv[2], '--duration', '0.0025']))
 """
     completed = subprocess.run(
-        [sys.executable, "-c", program, str(ROOT / "scripts/pace")],
+        [sys.executable, "-c", program, str(ROOT / "scripts/pace"), str(config_file(tmp_path))],
         env=dict(os.environ, PACE_ROOT=str(tmp_path)),
         capture_output=True,
         text=True,
@@ -382,3 +407,234 @@ def test_save_remains_cpu_when_torch_default_device_changes(native_config, tmp_p
         save_data(data, path)
     loaded = torch.load(path, weights_only=True)
     assert all(tensor.device.type == "cpu" for tensor in loaded.values())
+
+
+def test_independent_directions_mirror_centers_and_preserve_native_measurements(native_config):
+    cfg = replace(
+        native_config,
+        position_directions=(-1.0, 1.0, -1.0) * 4,
+        velocity_directions=(-1.0, 1.0, -1.0, 1.0),
+    )
+    data = collect(cfg)
+    np.testing.assert_allclose(data.des_dof_pos[0], [0.0, 0.4, 1.4] * 4)
+    np.testing.assert_allclose(data.dof_pos[:6], np.tile([-0.05, 0.35, 1.35] * 4, (6, 1)))
+    assert data.des_dof_pos[1, 0] == pytest.approx(-0.003926829327955169)
+    assert data.des_dof_vel[1, 0] == pytest.approx(-0.15707317311820676)
+    assert data.des_dof_vel[1, 1] == pytest.approx(0.15707317311820676)
+    assert data.dof_pos[6, 2] < data.dof_pos[5, 2]
+    assert data.dof_vel[6, 0] < 0 < data.dof_vel[6, 1]
+
+
+@pytest.mark.parametrize("value", [0, 2, True, float("nan"), "1"])
+def test_invalid_direction_fails_before_model_load(native_config, value):
+    cfg = replace(native_config, model_path=Path("/missing/model.xml"), velocity_directions=(value,) * 4)
+    with pytest.raises(ValueError, match="velocity_directions"):
+        collect(cfg)
+
+
+def test_direction_config_and_legacy_defaults(tmp_path, native_config):
+    import dataclasses
+
+    source = (ROOT / "config/x5_collection.toml").read_text()
+    source = "\n".join(line for line in source.splitlines() if "_directions =" not in line)
+    path = tmp_path / "legacy.toml"
+    path.write_text(source)
+    legacy = load_config(path)
+    assert legacy.position_directions == (1.0,) * 12
+    assert legacy.velocity_directions == (1.0,) * 4
+    path.write_text(source.replace("[trajectory]", "[trajectory]\nvelocity_directions = [-1, 1, -1, 1]"))
+    assert load_config(path).velocity_directions == (-1, 1, -1, 1)
+    original_fields = {
+        f.name: getattr(native_config, f.name)
+        for f in dataclasses.fields(native_config)
+        if f.name not in ("position_directions", "velocity_directions", "visualize")
+    }
+    old_caller = type(native_config)(**original_fields)
+    old, new = collect(old_caller), collect(native_config)
+    for f in dataclasses.fields(old):
+        np.testing.assert_array_equal(getattr(old, f.name), getattr(new, f.name))
+
+
+def test_visualization_config_can_be_enabled_and_rejects_non_boolean(tmp_path):
+    source = (ROOT / "config/x5_collection.toml").read_text()
+    source = "\n".join(line for line in source.splitlines() if not line.startswith("visualize ="))
+    path = tmp_path / "viewer.toml"
+    path.write_text(source.replace("[run]", "[run]\nvisualize = true"))
+    assert load_config(path).visualize is True
+    path.write_text(source.replace("[run]", "[run]\nvisualize = 1"))
+    with pytest.raises(ValueError, match="visualize"):
+        load_config(path)
+
+
+def test_requested_viewer_startup_failure_is_explicit(native_config, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DISPLAY", "invalid-display-cr1")
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    with pytest.raises(RuntimeError, match="[Vv]iewer"):
+        collect(replace(native_config, visualize=True))
+
+
+@pytest.fixture
+def child_gui(tmp_path, monkeypatch):
+    """Replace only the external GUI API in spawned Python, retaining native physics/IPC."""
+    import os
+
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "sitecustomize.py").write_text("""
+import os, sys, time, types, signal, threading
+finished = threading.Event()
+mode = os.environ['TEST_GUI_MODE']
+module = types.ModuleType('mujoco.viewer')
+class Handle:
+    def __init__(self, model, data):
+        self.model, self.data = model, data
+        self.frames = 0
+    def sync(self):
+        self.frames += 1
+        if mode == 'crash' and self.frames >= 2:
+            os._exit(17)
+        if mode == 'mutate':
+            self.data.qpos[:] = 123
+            self.data.ctrl[:] = -99
+            self.model.opt.gravity[:] = 0
+        if mode == 'slow':
+            time.sleep(.08)
+    def is_running(self):
+        return mode != 'closed_initial' and (mode != 'closed' or self.frames < 2)
+    def close(self):
+        finished.set()
+        if mode == 'unresponsive':
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            time.sleep(30)
+def launch_passive(model, data, **kwargs):
+    if mode == 'async_close':
+        def renderer():
+            finished.wait()
+            time.sleep(.1)
+            with open(os.environ['TEST_RENDER_DONE'], 'w') as output:
+                output.write('done')
+        threading.Thread(target=renderer, daemon=True).start()
+    if mode == 'startup_error':
+        raise RuntimeError('injected GUI startup error')
+    if mode == 'startup_timeout':
+        time.sleep(30)
+    return Handle(model, data)
+module.launch_passive = launch_passive
+sys.modules['mujoco.viewer'] = module
+""")
+    monkeypatch.setenv("PYTHONPATH", str(shim) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+    monkeypatch.setenv("TEST_GUI_MODE", "normal")
+    return shim
+
+
+@pytest.mark.parametrize("mode", ["normal", "closed", "closed_initial", "mutate", "slow"])
+def test_viewer_preserves_all_samples_and_values(native_config, child_gui, monkeypatch, mode):
+    import dataclasses
+    import multiprocessing
+
+    monkeypatch.setenv("TEST_GUI_MODE", mode)
+    cfg = replace(native_config, duration=0.15)
+    baseline = collect(cfg)
+    observed = collect(replace(cfg, visualize=True))
+    for field in dataclasses.fields(baseline):
+        np.testing.assert_array_equal(getattr(observed, field.name), getattr(baseline, field.name))
+    assert len(observed.time) == 60
+    assert not [p for p in multiprocessing.active_children() if p.name == "mujoco-observer"]
+
+
+@pytest.mark.parametrize("mode", ["startup_error", "crash", "startup_timeout", "unresponsive"])
+def test_viewer_failure_preserves_existing_output(native_config, child_gui, monkeypatch, tmp_path, mode):
+    import multiprocessing
+
+    import mujoco_viewer
+    from data_collection_mujoco import main
+
+    monkeypatch.setenv("TEST_GUI_MODE", mode)
+    # Bounded fault tests exercise the same escalation without waiting production deadlines.
+    monkeypatch.setattr(mujoco_viewer, "STARTUP_TIMEOUT", 0.8)
+    monkeypatch.setattr(mujoco_viewer, "SHUTDOWN_TIMEOUT", 0.1)
+    monkeypatch.setattr(mujoco_viewer, "TERMINATE_TIMEOUT", 0.1)
+    monkeypatch.setattr(mujoco_viewer, "KILL_TIMEOUT", 0.5)
+    path = config_file(tmp_path, path=f'"{native_config.model_path}"')
+    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"previous dataset")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    assert main(["--config", str(path), "--duration", ".15", "--visualize"]) == 1
+    assert output.read_bytes() == b"previous dataset"
+    assert not [p for p in multiprocessing.active_children() if p.name == "mujoco-observer"]
+
+
+def test_ctrl_c_with_active_viewer_preserves_output(native_config, child_gui, monkeypatch, tmp_path):
+    import multiprocessing
+
+    from data_collection_mujoco import main
+
+    mj: Any = importlib.import_module("mujoco")
+
+    def interrupt(model, data):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(mj, "mj_step", interrupt)
+    path = config_file(tmp_path, path=f'"{native_config.model_path}"')
+    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"previous dataset")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    assert main(["--config", str(path), "--duration", ".01", "--visualize"]) == 130
+    assert output.read_bytes() == b"previous dataset"
+    assert not [p for p in multiprocessing.active_children() if p.name == "mujoco-observer"]
+
+
+@pytest.mark.parametrize(("file_value", "flag"), [("true", "--no-visualize"), ("false", None)])
+def test_cli_disables_viewer_without_display(native_config, monkeypatch, tmp_path, file_value, flag):
+    from data_collection_mujoco import main
+
+    path = config_file(tmp_path, path=f'"{native_config.model_path}"', visualize=file_value)
+    monkeypatch.setenv("DISPLAY", "invalid-display-cr1")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    args = ["--config", str(path), "--duration", ".01"]
+    assert main(args + ([flag] if flag else [])) == 0
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_collection_pacing_stops_after_normal_close(native_config, child_gui, monkeypatch, closed):
+    from types import SimpleNamespace
+
+    import mujoco_viewer
+
+    clock = [0.0]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setenv("TEST_GUI_MODE", "closed_initial" if closed else "normal")
+    monkeypatch.setattr(mujoco_viewer, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+    result = collect(replace(native_config, visualize=True, duration=0.1))
+    assert len(result.time) == 40
+    assert sum(sleeps) == pytest.approx(0 if closed else 0.1)
+
+
+@pytest.mark.parametrize("field,length", [("position_directions", 11), ("velocity_directions", 5)])
+def test_direction_lengths_are_checked(native_config, field, length):
+    with pytest.raises(ValueError, match=field):
+        collect(replace(native_config, **{field: (1.0,) * length}))
+
+
+def test_viewer_flags_are_mutually_exclusive():
+    from data_collection_mujoco import main
+
+    with pytest.raises(SystemExit) as error:
+        main(["--visualize", "--no-visualize"])
+    assert error.value.code == 2
+
+
+def test_waits_for_renderer_cleanup_before_returning(native_config, child_gui, monkeypatch, tmp_path):
+    monkeypatch.setenv("TEST_GUI_MODE", "async_close")
+    marker = tmp_path / "render-done"
+    monkeypatch.setenv("TEST_RENDER_DONE", str(marker))
+    collect(replace(native_config, visualize=True))
+    assert marker.read_text() == "done"

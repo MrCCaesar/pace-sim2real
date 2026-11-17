@@ -1,0 +1,27 @@
+{
+  "e1": {
+    "experiment": "E1",
+    "steps_per_run": 40,
+    "simulation_seconds_per_run": 0.1,
+    "equal_arrays": {
+      "time": true,
+      "dof_pos": true,
+      "des_dof_pos": true,
+      "dof_vel": true,
+      "des_dof_vel": true
+    },
+    "closed_at_step": 10,
+    "continued_steps": 30,
+    "display_copy_mutated_at": 5,
+    "viewer_exit": 0
+  },
+  "e2": {
+    "experiment": "E2",
+    "watchdog_killed": false,
+    "exit_code": 1,
+    "elapsed_seconds": 1.099,
+    "stdout": "",
+    "reaped": true,
+    "stderr": "/home/sevnce-mr/pace-sim2real/.venv/lib/python3.12/site-packages/glfw/__init__.py:917: GLFWError: (65550) b'X11: Failed to open display invalid-display-cr1'\n  warnings.warn(message, GLFWError)\nERROR: could not initialize GLFW\n\n"
+  }
+}

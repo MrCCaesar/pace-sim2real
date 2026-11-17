@@ -21,12 +21,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max_frequency", type=float)
     parser.add_argument("--duration", type=float)
     parser.add_argument("--plot", action="store_true", default=None)
+    viewer = parser.add_mutually_exclusive_group()
+    viewer.add_argument("--visualize", action="store_true", default=None)
+    viewer.add_argument("--no-visualize", dest="visualize", action="store_false")
     args = parser.parse_args(argv)
     try:
         config = load_config(args.config)
         overrides = {
             name: getattr(args, name)
-            for name in ("min_frequency", "max_frequency", "duration", "plot")
+            for name in ("min_frequency", "max_frequency", "duration", "plot", "visualize")
             if getattr(args, name) is not None
         }
         config = replace(config, **overrides)

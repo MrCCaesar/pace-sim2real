@@ -71,3 +71,24 @@ Review baseline 919afdc was confirmed by the user. Two independent read-only age
 ## Outcome
 
 No implementation changes were needed during Verify. No new commits, pushes, GitHub comments or Issue status edits were made. Software work for #5–#7 is verified; closing/publishing issues requires a separate user instruction.
+
+
+## CR1 implementation checks — 2026-11-17 (not formal Verify)
+
+Implement explicitly authorized via implement skill for #8/#9. TDD seams: approved public load_config/collect/CLI/save interfaces; external native GUI and clock boundaries are substituted for deterministic faults. Confirmed review base: 3a02f00. No Isaac Lab simulation launched.
+
+- Direction behavior test first failed on absent position_directions, then passed after target/initial-state/history changes. Invalid-sign/config compatibility tests failed before validation/schema support and then passed.
+- Viewer configuration and explicit startup-failure tests failed before implementation and passed afterward. A ready/closed message race was reproduced and fixed; collection now completes after immediate post-ready close.
+- Real X5 GUI smoke initially failed at process teardown with native exit -6; old output was preserved. An external GUI stub reproduced incomplete asynchronous renderer shutdown. Joining viewer-created threads before child interpreter shutdown fixed the regression and the native smoke. Parent deadline/escalation still bounds a stuck renderer.
+- `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q`: 67 passed in 11.95 s (complete repository test set). Tests exercise independent directions, legacy compatibility, IPC/GUI isolation, deterministic output equality, normal close, startup error/timeout, runtime crash, forced cleanup, Ctrl+C preservation and monotonic pacing. No claim of manual GUI acceptance.
+- `uv tool run pyright --pythonpath .venv/bin/python scripts/pace/mujoco_collection.py scripts/pace/mujoco_viewer.py scripts/pace/data_collection_mujoco.py tests/test_mujoco_collection.py`: 0 errors/warnings. Ruff check passed. Initial flake8 R506 was corrected; affected-file pre-commit rerun passed.
+- Pre-commit uses SKIP=insert-license because the repository's configured .github/LICENSE_HEADER.txt template is absent (pre-existing baseline issue). Existing Apache SPDX headers retained. Other applicable hooks passed on affected code/docs. No push performed.
+
+Real X5 resource preflight: 19,643 MiB available RAM, 22,617/24,564 MiB free GPU memory. Each CLI run used one model, 0.1 s / 40 steps, a 20 s external watchdog and /tmp output. Mixed signs were applied to selected hips and wheels in a temporary config, with plot=false.
+
+```sh
+PACE_ROOT=/tmp/pace-cr1-implementation/headless timeout --kill-after=2s 20s .venv/bin/python scripts/pace/data_collection_mujoco.py --config /tmp/pace-cr1-implementation/config.toml --duration .1 --no-visualize
+PACE_ROOT=/tmp/pace-cr1-implementation/viewer timeout --kill-after=2s 20s .venv/bin/python scripts/pace/data_collection_mujoco.py --config /tmp/pace-cr1-implementation/config.toml --duration .1 --visualize
+```
+
+Both final runs exited 0 and saved 40 samples. torch.equal comparison was true for all five tensors; shapes [40], [40,12], [40,12], [40,4], [40,4]. Viewer startup, synchronization and shutdown ran against real MuJoCo 3.17.0. Camera appearance/manipulation and a human window-manager close action were not checked. Full-duration mirrored X5 physics acceptance remains user-owned. Formal Verify requires a separate stage approval.

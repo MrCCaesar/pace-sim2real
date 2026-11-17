@@ -8,6 +8,7 @@ import importlib
 import math
 import tomllib
 from collections.abc import Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,9 @@ class CollectionConfig:
     duration: float
     seed: int
     plot: bool
+    position_directions: tuple[float, ...] = (1.0,) * 12
+    velocity_directions: tuple[float, ...] = (1.0,) * 4
+    visualize: bool = False
 
 
 def _number(value: object, name: str) -> float:
@@ -61,9 +65,11 @@ def load_config(path: Path) -> CollectionConfig:
     }
     if raw.keys() != schema.keys():
         raise ValueError(f"Configuration sections must be {sorted(schema)}")
+    optional = {"trajectory": {"position_directions", "velocity_directions"}, "run": {"visualize"}}
     for name, keys in schema.items():
-        if not isinstance(raw[name], dict) or raw[name].keys() != keys:
-            raise ValueError(f"{name} requires exactly these keys: {sorted(keys)}")
+        allowed = keys | optional.get(name, set())
+        if not isinstance(raw[name], dict) or not keys <= raw[name].keys() <= allowed:
+            raise ValueError(f"{name} requires {sorted(keys)}; allowed keys: {sorted(allowed)}")
     run, trajectory, channels = raw["run"], raw["trajectory"], raw["channels"]
     for name, count in [("position_joints", 12), ("velocity_joints", 4)]:
         values = channels[name]
@@ -86,12 +92,18 @@ def load_config(path: Path) -> CollectionConfig:
         duration=_number(run["duration"], "duration"),
         seed=run["seed"],
         plot=run["plot"],
+        visualize=run.get("visualize", False),
+        position_directions=_vector(trajectory.get("position_directions", (1.0,) * 12), "position_directions", 12),
+        velocity_directions=_vector(trajectory.get("velocity_directions", (1.0,) * 4), "velocity_directions", 4),
     )
     _validate_config(config)
     return config
 
 
 def _validate_config(config: CollectionConfig) -> None:
+    for name, size in [("position_directions", 12), ("velocity_directions", 4)]:
+        if any(value not in (-1, 1) for value in _vector(getattr(config, name), name, size)):
+            raise ValueError(f"{name} must contain only +1 or -1")
     for name, size in [("position_centers", 12), ("position_amplitudes", 12), ("velocity_amplitudes", 4)]:
         values = _vector(getattr(config, name), name, size)
         if name.endswith("amplitudes") and min(values) < 0:
@@ -108,6 +120,8 @@ def _validate_config(config: CollectionConfig) -> None:
         raise ValueError("duration must be positive")
     if type(config.seed) is not int or config.seed < 0:
         raise ValueError("seed must be a nonnegative integer")
+    if type(config.visualize) is not bool:
+        raise ValueError("visualize must be a boolean")
     if type(config.plot) is not bool:
         raise ValueError("plot must be a boolean")
     names = config.position_joints + config.velocity_joints
@@ -198,7 +212,8 @@ def collect(config: CollectionConfig) -> CollectionData:
         actuator_ids.append(int(actuators[0]))
         sensor_ids.append(int(sensors[0]))
     data = mujoco.MjData(model)
-    centers = np.array((*config.position_centers, 0.0, 0.0, 0.0, 0.0))
+    directions = np.array((*config.position_directions, *config.velocity_directions))
+    centers = np.array((*config.position_centers, 0.0, 0.0, 0.0, 0.0)) * directions
     amplitudes = np.array((*config.position_amplitudes, *config.velocity_amplitudes))
     ctrl_ids = model.actuator_ctrladr[actuator_ids]
     data.qpos[model.jnt_qposadr[joint_ids]] = centers
@@ -217,21 +232,29 @@ def collect(config: CollectionConfig) -> CollectionData:
             + (config.max_frequency - config.min_frequency) * time**2 / (2 * config.duration)
         )
     )
-    desired = centers + np.sin(phase[:, None]) * amplitudes
+    desired = centers + np.sin(phase[:, None]) * amplitudes * directions
     measured = np.empty((steps, 16), dtype=np.float64)
     rng = np.random.default_rng(config.seed)
     noise = model.sensor_noise[sensor_ids]
     sensor_addresses = model.sensor_adr[sensor_ids]
-    for step in range(steps):
-        data.ctrl[ctrl_ids] = desired[step]
-        mujoco.mj_forward(model, data)
-        _check_dynamics(data, time[step], step)
-        measured[step] = data.sensordata[sensor_addresses] + rng.normal(0, noise)
-        measured[step, :12] -= config.encoder_bias
-        mujoco.mj_step(model, data)
-        _check_dynamics(data, (step + 1) * dt, step)
-        if not np.isfinite(measured[step]).all():
-            raise RuntimeError(f"Nonfinite measurement at step {step}")
+    session = nullcontext()
+    if config.visualize:
+        from mujoco_viewer import ViewerSession
+
+        session = ViewerSession(config.model_path, model, data)
+    with session as viewer:
+        for step in range(steps):
+            data.ctrl[ctrl_ids] = desired[step]
+            mujoco.mj_forward(model, data)
+            _check_dynamics(data, time[step], step)
+            measured[step] = data.sensordata[sensor_addresses] + rng.normal(0, noise)
+            measured[step, :12] -= config.encoder_bias
+            mujoco.mj_step(model, data)
+            _check_dynamics(data, (step + 1) * dt, step)
+            if not np.isfinite(measured[step]).all():
+                raise RuntimeError(f"Nonfinite measurement at step {step}")
+            if viewer is not None:
+                viewer.update(data)
     return CollectionData(time, measured[:, :12], desired[:, :12], measured[:, 12:], desired[:, 12:])
 
 
