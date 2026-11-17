@@ -37,9 +37,10 @@ nav:
       - Installation: installation.md
       - Importing: importing.md
       - Basic usage: usage.md
-  - Examples: 
+  - Examples:
       - Overview: examples/index.md
       - ANYmal: examples/anymal.md
+      - X5 (native MuJoCo): examples/x5.md
   - Guides:
     - Basics: tutorials/basics.md
     - Advanced: tutorials/advanced.md
@@ -89,4 +90,3 @@ plugins:
   #       python:
   #         paths:
   #           - source/pace_sim2real
-

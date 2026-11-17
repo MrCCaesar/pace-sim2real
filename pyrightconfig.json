@@ -1,6 +1,7 @@
 {
     "extraPaths": [
         "src",
+        "scripts/pace",
         "/home/sevnce-mr/IsaacLab/source/isaaclab",
         "/home/sevnce-mr/IsaacLab/source/isaaclab_assets",
         "/home/sevnce-mr/IsaacLab/source/isaaclab_contrib",
