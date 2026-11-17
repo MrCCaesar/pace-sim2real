@@ -186,3 +186,19 @@ Implementation explicitly authorized through the implement skill; review base ec
 - Integration startup fixes: minimal fixture now supplies valid action/observation configuration; base and wrapped env access supported; X5 task overrides only base height while preserving asset's existing legal joint defaults. Earlier task startup failed because replacement InitialStateCfg had reset calf defaults to zero outside limits. No numeric excitation, joint limits or collision geometry were changed.
 
 No physical acceptance, full20s sweep, manual GUI validation, push or GitHub Issue closure. Two-axis review and final local commit handoff remain to complete this Implement stage.
+
+### CR2 implementation review follow-up — 2026-11-17
+
+User clarified that Newton automatic disablement is intentional. Configuration now warns before disabling separate dynamic friction and stripping ratio bounds; spec/ADR0008/usage and plan amendment record this approved supersession. Direct unsupported optimizer calls remain guarded. Collection and fitting validate exactly one actuator per controlled joint before parameter writes.
+
+- Full suite: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q` — **90 passed, 2 upstream cmaes small-population warnings, 18.39 s**.
+- Same targeted Pyright command recorded above — **0 errors, 0 warnings**.
+- New regression coverage: empty/missing/duplicate actuator coverage; real Newton configuration warning, removal of ratio bounds for 49/61 base layouts and idempotent validation.
+- Real X5 CLI: `.venv/bin/python scripts/pace/data_collection.py --task Isaac-Pace-Sevnce-X5-v0 --num_envs 2 --duration .1 --visualizer none physics=newton_mjwarp` — **exit0, 12.004 s**; isolated output root, headless, existing test-only EULA authorization and 120 s / 4 GiB watchdog. Preflight RAM15351MiB, GPU22633MiB free.
+- Changed-file pre-commit: all applicable hooks passed after formatting; license hook skipped because the pre-existing template is absent. Direct `.venv/bin/python -m black` was unavailable; repository pre-commit supplied Black successfully.
+- **Standards review:** no material findings; optional duplicated configuration assignments retained under the minimal-change constraint. Follow-up found no new problems.
+- **Spec review:** initial two findings resolved. Newton rejection was superseded by explicit user clarification; aggregate actuator coverage was fixed. Independent reviewer confirmed no residual issue. Reviewers inspected code without running simulations.
+
+These are Implement checks; formal Verify and user-owned physical/manual acceptance are not claimed complete.
+
+Post-fix real Newton collection/fit smoke: `OMNI_KIT_ACCEPT_EULA=YES OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python tests/test_mixed_collection_fit.py newton smoke /tmp/pace-cr2-implement-newton-smoke` — exit0, 11.003 s, 2 environments/40 steps, both truth RMSEs zero. Same resource watchdog applied. Prior PhysX and optimization evidence remains unchanged; no need to repeat unchanged dynamics trials.

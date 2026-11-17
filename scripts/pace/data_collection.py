@@ -100,6 +100,31 @@ def main(argv: list[str] | None = None):
         bias[:, len(leg_ids) :].fill_(0.0)  # no bias for wheels
         env_ids = torch.arange(env.unwrapped.num_envs, device=env.unwrapped.device)
         time_lag = torch.full((len(env_ids),), 5, dtype=torch.long, device=env.unwrapped.device)
+        drives = []
+        coverage = torch.zeros(len(joint_ids), dtype=torch.long, device=joint_ids.device)
+        for drive_type in articulation.actuators:
+            actuator = articulation.actuators[drive_type]
+            if not callable(getattr(actuator, "update_time_lags", None)) or not callable(
+                getattr(actuator, "update_encoder_bias", None)
+            ):
+                raise TypeError(f"Actuator {drive_type!r} does not support PACE delay and encoder bias updates.")
+            drive_indices = actuator.joint_indices
+            if isinstance(drive_indices, slice):
+                all_idx = torch.arange(articulation.num_joints, device=joint_ids.device)
+                drive_indices = all_idx[drive_indices]
+            else:
+                drive_indices = torch.as_tensor(drive_indices, dtype=torch.long, device=joint_ids.device)
+            comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
+            if not torch.all(comparison_matrix.sum(dim=0) == 1):
+                raise ValueError(f"Each joint in actuator {drive_type!r} must occur exactly once in joint_order.")
+            drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
+            coverage += comparison_matrix.sum(dim=1)
+            if (time_lag > actuator.cfg.max_delay).any():
+                raise ValueError("Collection delay exceeds actuator capacity")
+            drives.append((actuator, drive_joint_idx))
+        if not (coverage == 1).all():
+            raise ValueError("Every controlled joint must have exactly one PACE actuator")
+
         env.reset()
 
         physics_cfg = env.unwrapped.sim.cfg.physics
@@ -153,22 +178,7 @@ def main(argv: list[str] | None = None):
                 env_ids=env_ids,
             )
 
-        for drive_type in articulation.actuators:
-            actuator = articulation.actuators[drive_type]
-            if not callable(getattr(actuator, "update_time_lags", None)) or not callable(
-                getattr(actuator, "update_encoder_bias", None)
-            ):
-                raise TypeError(f"Actuator {drive_type!r} does not support PACE delay and encoder bias updates.")
-            drive_indices = actuator.joint_indices
-            if isinstance(drive_indices, slice):
-                all_idx = torch.arange(articulation.num_joints, device=joint_ids.device)
-                drive_indices = all_idx[drive_indices]
-            else:
-                drive_indices = torch.as_tensor(drive_indices, dtype=torch.long, device=joint_ids.device)
-            comparison_matrix = joint_ids.unsqueeze(1) == drive_indices.unsqueeze(0)
-            if not torch.all(comparison_matrix.sum(dim=0) == 1):
-                raise ValueError(f"Each joint in actuator {drive_type!r} must occur exactly once in joint_order.")
-            drive_joint_idx = torch.argmax(comparison_matrix.int(), dim=0)
+        for actuator, drive_joint_idx in drives:
             actuator.update_time_lags(time_lag)
             actuator.update_encoder_bias(bias[:, drive_joint_idx])
             actuator.reset(env_ids)

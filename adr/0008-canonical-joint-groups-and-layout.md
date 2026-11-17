@@ -29,3 +29,5 @@ Issue #4 research.md / spec.md and installed-source investigation; cr2-research-
 Structure constraint: user subsequently required only necessary structure changes/new files. Retain existing modules/classes; final detailed proposal limits new implementation files to one shared helper and one focused test file, subject to Q23 review.
 
 Final interface approval: Q23 “批准最终契约及两个必要文件”; concrete contracts are recorded in .scratch/issue_4/interfaces.md. No implementation-stage transition implied.
+
+Implementation clarification approved by user (2026-11-17): Newton configuration validation warns and disables separate dynamic friction identification, removing appended ratio bounds before CMA construction. The earlier specification's rejection requirement is superseded; direct unsupported optimizer calls remain guarded. Rationale: Newton cannot set separate dynamic friction, so allocating these optimization variables would be ineffective. PhysX retains optional ratio variables.

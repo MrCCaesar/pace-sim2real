@@ -514,3 +514,83 @@ def test_plot_loader_rejects_unpaired_legacy_and_tampered_errors(tmp_path):
     torch.save(torch.zeros(5), path)
     with pytest.raises(ValueError, match="pair"):
         plotter.load_result(path)
+
+
+@pytest.mark.parametrize("drive_joints", [[], [[0]], [[0, 1], [1]]])
+def test_optimizer_rejects_missing_or_duplicate_drives_before_writes(tmp_path, drive_joints):
+    optimizer = load_module("pace_coverage_optimizer", "src/pace_sim2real/optim/cma_es.py")
+    data = {
+        "time": torch.tensor([0.0, 0.01], dtype=torch.float64),
+        "dof_pos": torch.zeros(2, 1),
+        "des_dof_pos": torch.zeros(2, 1),
+        "dof_vel": torch.zeros(2, 1),
+        "des_dof_vel": torch.zeros(2, 1),
+    }
+    opt = optimizer.CMAESOptimizer(
+        torch.zeros(8, 2),
+        2,
+        str(tmp_path),
+        ["leg", "wheel"],
+        1,
+        data,
+        "cpu",
+        leg_order=["leg"],
+        wheel_order=["wheel"],
+    )
+    # No writer methods: reaching a write instead of rejecting the mapping fails this test.
+    robot = SimpleNamespace(
+        num_joints=2,
+        actuators={
+            str(index): SimpleNamespace(
+                joint_indices=ids,
+                cfg=SimpleNamespace(delay_mode="command", max_delay=10),
+                update_encoder_bias=lambda value: None,
+                update_time_lags=lambda value: None,
+            )
+            for index, ids in enumerate(drive_joints)
+        },
+    )
+    with pytest.raises(ValueError, match="exactly one PACE actuator"):
+        opt.update_simulator(robot, [0, 1], torch.zeros(2, 1), initial_wheel_velocity=torch.zeros(2, 1))
+
+
+def test_newton_config_warns_and_removes_ratio_variables():
+    import os
+    import subprocess
+
+    script = """
+import warnings
+from types import SimpleNamespace
+import torch
+from pace_sim2real.tasks.manager_based.pace.pace_sim2real_env_cfg import PaceCfg, PaceSim2realEnvCfg, NewtonCfg
+for legs, wheels in [(12, 0), (12, 4)]:
+    count = legs + wheels
+    size = 3 * count + legs + 1
+    cfg = PaceCfg()
+    cfg.leg_order = [f"leg{i}" for i in range(legs)]
+    cfg.wheel_order = [f"wheel{i}" for i in range(wheels)]
+    cfg.joint_order = cfg.leg_order + cfg.wheel_order
+    cfg.bounds_params = torch.arange(size * 2, dtype=torch.float32).reshape(size, 2)
+    original = cfg.bounds_params.clone()
+    cfg.separate_dynamic_friction = True
+    cfg.apply_friction_ratio()
+    assert cfg.bounds_params.shape == (size + count, 2)
+    env_cfg = SimpleNamespace(sim=SimpleNamespace(physics=NewtonCfg()), sim2real=cfg)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        PaceSim2realEnvCfg.validate_config(env_cfg)
+        assert len(caught) == 1 and "removing friction ratio" in str(caught[0].message)
+        PaceSim2realEnvCfg.validate_config(env_cfg)
+        assert len(caught) == 1
+    assert not cfg.separate_dynamic_friction
+    torch.testing.assert_close(cfg.bounds_params, original)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=dict(os.environ, OMNI_KIT_ACCEPT_EULA="YES"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr

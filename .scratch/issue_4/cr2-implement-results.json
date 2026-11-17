@@ -3,7 +3,7 @@
   "authorization": "implement skill; review base explicitly confirmed by user",
   "full_suite": {
     "command": "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q",
-    "result": "86 passed, 2 upstream cmaes small-population warnings in 15.59s"
+    "result": "90 passed, 2 upstream cmaes small-population warnings in 18.39s"
   },
   "typecheck": {
     "command": "uvx --offline pyright --pythonpath .venv/bin/python scripts/pace src/pace_sim2real/optim/cma_es.py src/pace_sim2real/utils src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py tests/test_mixed_collection_fit.py",
@@ -261,5 +261,41 @@
     "scripts/pace/data_collection.py": "f9ddc70ba0f25f7fe8ca26c823498e1eca0249f40f262644f4f8517f89120a7a",
     "scripts/pace/fit.py": "bd39629ad628bd3149e37e4eef1950faf0065a3293ea1a37a806f7ebe8e25f81",
     "src/pace_sim2real/optim/cma_es.py": "eb17f3516a9957c4a397431fc4ce6234b310f67b33e41836f94f3859ce95e133"
+  },
+  "review_followup": {
+    "newton_behavior": "User explicitly approved warning + disablement + ratio bounds removal; supersedes rejection sentence",
+    "actuator_coverage": "Exactly one drive per controlled joint before parameter writes",
+    "standards": "No material findings; follow-up confirmed",
+    "spec": "Two initial findings resolved; follow-up confirmed",
+    "x5_collection": {
+      "command": [
+        "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+        "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection.py",
+        "--task",
+        "Isaac-Pace-Sevnce-X5-v0",
+        "--num_envs",
+        "2",
+        "--duration",
+        ".1",
+        "--visualizer",
+        "none",
+        "physics=newton_mjwarp"
+      ],
+      "returncode": 0,
+      "elapsed_seconds": 12.004,
+      "stop_reason": null
+    },
+    "newton_smoke": {
+      "command": [
+        "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+        "/home/sevnce-mr/pace-sim2real/tests/test_mixed_collection_fit.py",
+        "newton",
+        "smoke",
+        "/tmp/pace-cr2-implement-newton-smoke"
+      ],
+      "returncode": 0,
+      "elapsed_seconds": 11.003,
+      "stop_reason": null
+    }
   }
 }

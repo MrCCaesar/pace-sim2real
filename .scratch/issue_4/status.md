@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR2 Implement / In progress, explicitly authorized by implement skill invocation. Executing #10–#13 against approved Q11–Q23; comparison base ecefbfe proposed for user confirmation. Test seams are the already approved collection, group/action/data contracts, optimizer and paired-result consumer. No tracker state changes or push authorized.
+Current stage: CR2 Implement / Complete. #10–#13 implemented against approved Q11–Q23 and user-approved Newton warning/disablement clarification. Review base ecefbfe confirmed; both review axes resolved. Await explicit authorization for Verify. No push or tracker state changes.
 
 ## Delivery
 
@@ -87,3 +87,5 @@ CR2 Plan entry: approved specification mapped into four end-to-end slices with t
 CR2 publication complete: #10–#13 created and verified against approved bodies, native parent and blocker edges. Parent content/state/comments unchanged; no earlier issue states changed. Durable links/evidence summary in plan.md. Documentation diff check passed; no runtime tests, commits or pushes. Next: explicitly authorized Implement, starting available frontier #10/#11.
 
 CR2 Implement checks: #10–#13 code implemented;86 tests passed with2 documented upstream population2 warnings; targeted Pyright0. Both backend ActionManager smoke, controlled20-generation fit (>50% objective reduction) and decimation2 delay checks passed. Native-to-fit format roundtrip and actual X5 collection/one-generation fit CLI passed. Details in verification.md and cr2-implement-results.json. User confirmed ecefbfe review base; preparing local implementation commit and mandatory two-axis review. No formal Verify transition or tracker changes.
+
+CR2 implementation review complete: 90 tests passed, Pyright0, short X5 collection rerun passed. Newton warns and strips ratio variables per user clarification; actuator coverage validation now precedes writes. Two independent reviewers confirmed no remaining material findings. Local implementation commit 2a3ddda plus follow-up fix commit; no push/issue edits. See verification.md and cr2-implement-results.json.

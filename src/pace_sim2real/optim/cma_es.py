@@ -296,6 +296,7 @@ class CMAESOptimizer:
         if newton and self.separate_dynamic_friction:
             raise ValueError("Newton does not support separate dynamic friction identification")
         drives = []
+        coverage = torch.zeros(num_joints, device=self.device, dtype=torch.long)
         for name, drive in articulation.actuators.items():
             if not callable(getattr(drive, "update_encoder_bias", None)) or not callable(
                 getattr(drive, "update_time_lags", None)
@@ -309,7 +310,10 @@ class CMAESOptimizer:
             matches = ids[:, None] == drive_ids[None, :]
             if not (matches.sum(dim=0) == 1).all():
                 raise ValueError("Every actuator joint must occur in controlled joint order")
+            coverage += matches.sum(dim=1)
             drives.append((drive, matches.long().argmax(dim=0)))
+        if not (coverage == 1).all():
+            raise ValueError("Every controlled joint must have exactly one PACE actuator")
         env_ids = torch.arange(self.population_size, device=self.device)
         articulation.write_joint_armature_to_sim_index(
             armature=self.sim_params[:, self.armature_idx], joint_ids=ids, env_ids=env_ids

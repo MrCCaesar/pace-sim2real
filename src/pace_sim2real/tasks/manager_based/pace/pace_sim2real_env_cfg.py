@@ -3,6 +3,7 @@
 # Licensed under the Apache License 2.0
 
 # import math
+import warnings
 from dataclasses import MISSING
 
 import isaaclab.sim as sim_utils
@@ -283,5 +284,11 @@ class PaceSim2realEnvCfg(ManagerBasedRLEnvCfg):
 
     def validate_config(self) -> None:
         """Adapt friction bounds after the physics preset has been resolved."""
-        if isinstance(self.sim.physics, NewtonCfg):
+        if isinstance(self.sim.physics, NewtonCfg) and self.sim2real.separate_dynamic_friction:
+            warnings.warn(
+                "Newton does not support separate dynamic friction identification; "
+                "disabling it and removing friction ratio optimization parameters.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             self.sim2real.undo_friction_ratio()
