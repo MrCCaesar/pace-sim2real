@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR1 Implement — explicitly authorized with implement skill. #8/#9 code and tests in progress; comparison base 3a02f00 confirmed. Checks/review/commit remain before handoff; Verify not entered.
+Current stage: CR1 Implement — #8/#9 implemented in 2d1f78d; review follow-up fixes under validation. Confirmed review base 3a02f00. Formal Verify/manual GUI acceptance not yet entered.
 
 ## Delivery
 
@@ -45,3 +45,5 @@ CR1 publication approved by user “yes”. First create returned EOF with no UR
 CR1 publication recovered after user requested retry. #8 independent trajectory directions; #9 isolated live viewer and lifecycle handling. Exact bodies, labels, native parent relationship and empty blocking dependencies verified via REST. Earlier unknown create outcome resolved by duplicate checks before retries. No implementation started.
 
 CR1 implementation checks: 67 tests passed; Pyright/Ruff passed; native X5 40-sample GUI/headless data exactly equal after renderer shutdown fix. Commit preparation and two-axis review pending; manual GUI and formal Verify remain outstanding. User confirmed comparison base 3a02f00. Commit authorized by invoked implement skill; no push/tracker changes authorized.
+
+Review follow-up fixes validated: cancellation during escalation reaps child, timing tests directly observe capped publication/skipped frames, and IPC release no longer waits for traceback GC. Final full suite 70 passed in 13.69 s without warnings; Pyright0 and applicable pre-commit hooks passed. Follow-up commit and reviewer confirmation pending.

@@ -54,7 +54,7 @@ MjModel.from_xml_path, MjData, mj_forward, mj_step and mj_initCtrlHistory. Versi
 User approved this planning baseline, then authorized Implement and Verify. The interfaces are implemented in 87da096; verification.md records the software acceptance results.
 
 
-## CR1 contracts — Approved Q7–Q11, not implemented
+## CR1 contracts — Approved Q7–Q11; implemented, formal Verify pending
 
 The baseline contracts above describe the existing implementation. User approved configuration/architecture/policy in Q7–Q9 and timing/state-transfer/cleanup in Q10–Q11. These CR1 amendments take precedence for the forthcoming change.
 

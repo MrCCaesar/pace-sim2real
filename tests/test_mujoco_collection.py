@@ -499,6 +499,9 @@ class Handle:
             self.data.ctrl[:] = -99
             self.model.opt.gravity[:] = 0
         if mode == 'slow':
+            if 'TEST_FRAME_LOG' in os.environ:
+                with open(os.environ['TEST_FRAME_LOG'], 'a') as output:
+                    print(self.data.time, file=output)
             time.sleep(.08)
     def is_running(self):
         return mode != 'closed_initial' and (mode != 'closed' or self.frames < 2)
@@ -638,3 +641,83 @@ def test_waits_for_renderer_cleanup_before_returning(native_config, child_gui, m
     monkeypatch.setenv("TEST_RENDER_DONE", str(marker))
     collect(replace(native_config, visualize=True))
     assert marker.read_text() == "done"
+
+
+def test_ctrl_c_during_cleanup_escalation_still_reaps_child(native_config, child_gui, monkeypatch, tmp_path):
+    import multiprocessing
+    import os
+    import signal
+    from multiprocessing.process import BaseProcess
+
+    import mujoco_viewer
+    from data_collection_mujoco import main
+
+    monkeypatch.setenv("TEST_GUI_MODE", "unresponsive")
+    monkeypatch.setattr(mujoco_viewer, "SHUTDOWN_TIMEOUT", 0.1)
+    monkeypatch.setattr(mujoco_viewer, "TERMINATE_TIMEOUT", 0.1)
+    monkeypatch.setattr(mujoco_viewer, "KILL_TIMEOUT", 0.5)
+    original_join = BaseProcess.join
+    calls = []
+
+    def interrupt_terminate_wait(process, timeout=None):
+        if process.name == "mujoco-observer":
+            calls.append(timeout)
+            if len(calls) == 2:
+                os.kill(os.getpid(), signal.SIGINT)
+        return original_join(process, timeout)
+
+    monkeypatch.setattr(BaseProcess, "join", interrupt_terminate_wait)
+    path = config_file(tmp_path, path=f'"{native_config.model_path}"')
+    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"previous dataset")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    try:
+        assert main(["--config", str(path), "--duration", ".02", "--visualize"]) == 130
+        assert output.read_bytes() == b"previous dataset"
+        assert not [p for p in multiprocessing.active_children() if p.name == "mujoco-observer"]
+    finally:
+        # A regression must fail without leaving a hung child behind in the test runner.
+        for process in multiprocessing.active_children():
+            if process.name == "mujoco-observer":
+                process.kill()
+                original_join(process, 1)
+
+
+def test_slow_display_skips_frames_with_bounded_publication(native_config, child_gui, monkeypatch, tmp_path):
+    import time
+
+    mj: Any = importlib.import_module("mujoco")
+    original = mj.mj_getState
+    publications = []
+
+    def capture(model, data, state, kind):
+        publications.append((time.monotonic(), float(data.time)))
+        return original(model, data, state, kind)
+
+    monkeypatch.setattr(mj, "mj_getState", capture)
+    monkeypatch.setenv("TEST_GUI_MODE", "slow")
+    frames = tmp_path / "frames"
+    monkeypatch.setenv("TEST_FRAME_LOG", str(frames))
+    result = collect(replace(native_config, visualize=True, duration=0.4))
+    displayed = [float(line) for line in frames.read_text().splitlines()]
+    assert len(result.time) == 160
+    assert result.time[-1] == pytest.approx(0.3975)
+    assert publications[0][1] == displayed[0] == 0
+    # Ignore startup's first snapshot; live publications are capped at 30 Hz.
+    assert all(b[0] - a[0] >= 1 / 30 - 0.001 for a, b in zip(publications[1:], publications[2:], strict=False))
+    assert 2 < len(displayed) < len(publications) <= 13
+    # An 80 ms renderer consumes newer snapshots, not a growing 30 Hz frame backlog.
+    assert min(np.diff(displayed)[1:]) >= 0.05
+    assert all(value in [item[1] for item in publications] for value in displayed)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux named semaphore observation")
+def test_failed_viewer_releases_ipc_even_while_exception_is_retained(native_config, child_gui, monkeypatch):
+    directory = Path("/dev/shm")
+    before = set(directory.glob("sem.mp-*"))
+    monkeypatch.setenv("TEST_GUI_MODE", "startup_error")
+    with pytest.raises(RuntimeError, match="[Vv]iewer") as error:
+        collect(replace(native_config, visualize=True))
+    assert error.value is not None
+    assert set(directory.glob("sem.mp-*")) <= before

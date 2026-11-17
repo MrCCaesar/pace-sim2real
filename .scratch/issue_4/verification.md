@@ -92,3 +92,15 @@ PACE_ROOT=/tmp/pace-cr1-implementation/viewer timeout --kill-after=2s 20s .venv/
 ```
 
 Both final runs exited 0 and saved 40 samples. torch.equal comparison was true for all five tensors; shapes [40], [40,12], [40,12], [40,4], [40,4]. Viewer startup, synchronization and shutdown ran against real MuJoCo 3.17.0. Camera appearance/manipulation and a human window-manager close action were not checked. Full-duration mirrored X5 physics acceptance remains user-owned. Formal Verify requires a separate stage approval.
+
+
+### CR1 review follow-up checks
+
+Initial Standards review: one handoff/documentation inconsistency (stale not-implemented/in-progress headings); corrected. Initial Spec review: one P2 cancellation-during-escalation cleanup gap and one missing direct timing/transport assertion; both addressed.
+
+- Regression sent SIGINT at the terminate-wait boundary: initially returned 130 with a live child; after deferring SIGINT throughout cleanup, the child is reaped, output preserved and exit 130 retained.
+- Slow external GUI fixture now logs displayed native times; native state-publication observations prove the 30 Hz cap, skipped stale display frames and all 160 samples retained in a 0.4 s synthetic run.
+- Intermediate 69-test run passed but emitted two CPython resource-tracker reentrancy warnings. Neither named semaphore remained after process exit. A new test retained the failure traceback and demonstrated that IPC locks remained alive until GC. Explicit release of session IPC references fixed this; final suite emitted no warnings.
+- Final `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q`: **70 passed in 13.69 s**, no warnings. Final Pyright command above: 0 errors/warnings. Ruff formatting/check and all applicable affected-file pre-commit hooks passed (same pre-existing insert-license exception).
+
+These checks belong to Implement; formal Verify and manual camera/window-close acceptance remain outstanding.

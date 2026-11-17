@@ -56,7 +56,7 @@ Plot only when requested, after saving: one figure of 12 leg position axes, anot
 Q8 approved module/TOML separation; Q9 approved defaults, pre-integration sampling and integer-step duration; Q10 approved successful atomic replacement and failure preservation. User then explicitly entered Plan, Implement and Verify in sequence. This specification was implemented in 87da096; software acceptance evidence and physical limits are in verification.md.
 
 
-## CR1 — Specify / Approved decisions; ready for Plan handoff
+## CR1 — Approved specification; implemented, formal Verify pending
 
 Stage approval: “进入 Specify 阶段”. User then explicitly approved Q7–Q9 and Q10–Q11. The CR1 contracts below amend baseline D1–D3 and the no-live-viewer scope; earlier sections retain the original delivery history. This does not authorize Plan or implementation.
 

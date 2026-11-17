@@ -176,12 +176,7 @@ class ViewerSession:
         if not self._started:
             return
         self._stop.value = True
-        try:
-            self._process.join(SHUTDOWN_TIMEOUT)
-        except KeyboardInterrupt:
-            self._process.kill()
-            self._process.join(KILL_TIMEOUT)
-            raise
+        self._process.join(SHUTDOWN_TIMEOUT)
         if self._process.is_alive():
             self._process.terminate()
             self._process.join(TERMINATE_TIMEOUT)
@@ -192,6 +187,30 @@ class ViewerSession:
             raise RuntimeError("Viewer cleanup failed: child still running after kill")
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        # Defer SIGINT through every escalation wait, then preserve cancellation.
+        # Ignoring SIGINT would incorrectly save a completed run after the user cancels.
+        interrupted = False
+        previous = None
+
+        def defer_interrupt(signum: int, frame: Any) -> None:
+            nonlocal interrupted
+            interrupted = True
+
+        if threading.current_thread() is threading.main_thread():
+            previous = signal.signal(signal.SIGINT, defer_interrupt)
+        try:
+            self._finish(exc)
+        except BaseException as error:
+            if not interrupted:
+                raise
+            print(f"Viewer cleanup during cancellation: {error}", file=sys.stderr)
+        finally:
+            if previous is not None:
+                signal.signal(signal.SIGINT, previous)
+        if interrupted:
+            raise KeyboardInterrupt
+
+    def _finish(self, exc: Any) -> None:
         failure = None
         try:
             if self._started:
@@ -213,6 +232,8 @@ class ViewerSession:
             self._sender.close()
             if self._started and not self._process.is_alive():
                 self._process.close()
+            # Tracebacks may retain this session; release IPC now, not at cyclic GC.
+            del self._lock, self._state, self._buffer, self._changed, self._stop
         if failure is not None:
             if exc is None:
                 raise failure
