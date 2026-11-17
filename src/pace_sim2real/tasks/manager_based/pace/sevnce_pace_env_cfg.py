@@ -2,6 +2,7 @@
 # Author: Filip Bjelonic
 # Licensed under the Apache License 2.0
 
+
 from typing import Any, cast
 
 import torch
@@ -66,8 +67,7 @@ class SevnceX5PaceActionCfg:
 class SevnceX5PaceCfg(PaceCfg):
     """Pace configuration for Anymal-D robot."""
 
-    robot_name: str = "sevnce_x5_sim"
-    data_dir: str = "sevnce_x5_sim/chirp_data.pt"  # located in pace_sim2real/data/anymal_d_sim/chirp_data.pt
+    data_dir: str = "chirp_data.pt"  # located in pace_sim2real/data/Isaac-Pace-Sevnce-X5-v0/chirp_data.pt
     bounds_params: torch.Tensor = torch.zeros((61, 2))  # 3 * 16 + 12 leg biases + shared delay
     separate_dynamic_friction: bool = False  # appends 16 dynamic/static friction ratios
     leg_order: list[str] = [

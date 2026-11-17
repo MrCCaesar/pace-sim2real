@@ -185,7 +185,6 @@ class PaceCfg:
     time_mode: str = "strict"
     legacy_sample_dt: float | None = None
 
-    robot_name: str = MISSING
     data_dir: str = MISSING
     joint_order: list = MISSING
     leg_order: list = MISSING

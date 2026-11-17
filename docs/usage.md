@@ -97,7 +97,7 @@ This utility visualises the optimized trajectory and/or the evolution of the sco
 | `--folder_name`     | Name of the optimization output folder          |
 | `--result_name` | Paired evaluated result (default `best_result.pt`) |
 | `--mean_name` | Distribution mean diagnostics only; not a trajectory selector |
-| `--robot_name`      | Name of the robot                               |
+| `--robot_name`      | Task directory name (legacy option name)        |
 | `--plot_trajectory` | Plot the optimized joint trajectories           |
 | `--plot_score`      | Plot the score over iterations                  |
 
@@ -106,7 +106,7 @@ This utility visualises the optimized trajectory and/or the evolution of the sco
 ```bash
 python scripts/pace/plot_trajectory.py \
   --folder_name 24_03_12_14-32-10 \
-  --robot_name anymal_d_sim \
+  --robot_name Isaac-Pace-Anymal-D-v0 \
   --plot_trajectory
 ```
 
@@ -143,3 +143,5 @@ PACE collection and fitting send absolute targets: configure actions with `scale
 Collection and fitting register their runtime CLI flags locally, without loading Isaac Sim. Newton therefore needs no Kit EULA variable merely to parse arguments or start a kitless run. `physics=...` and `--visualizer`/`--viz` remain Isaac Lab preset selectors; `launch_simulation` starts Kit only when the resolved physics, renderer or viewer requires it. Explicit Isaac Sim PhysX or Kit visualization still requires the installed runtime and its license acceptance.
 
 Fitting prepares commands once, keeps timestamp checks on CPU and reuses device state buffers across generations. Scoring occurs after a complete valid rollout; automatic termination still stops immediately. `CMAESOptimizer.tell` accepts both individual `[population, joints]` samples and `[population, samples, joints]` chunks, with the same bias and group-loss semantics. Full-state fitting buffers require 8*(samples+1)*population*robot_joints bytes in addition to optimizer/reference storage.
+
+Isaac Lab collection writes `data/<task-name>/chirp_data.pt`; fitting reads `data/<task-name>/<data_dir>`, with task configs defaulting `data_dir` to `chirp_data.pt`. Namespace prefixes are removed from task names. Existing files are not moved automatically. Fitting defaults to `--device cuda` and no visualizer; use `--device cpu` or `--visualizer newton_gl` to override. These defaults do not change the selected physics preset.

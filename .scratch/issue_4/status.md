@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR2 Implement / Fitting performance follow-up complete. Batched rollout scoring preserves single-sample tell and paired results. 94 tests and Pyright passed; Newton/PhysX controlled optimization passed; ecefbfe comparison scope and adaptations recorded. Existing user collection/config/path edits are excluded. No external source edits, push or tracker changes.
+Current stage: User-authorized release/closure. Current code and user changes normalized; 94 tests, Pyright and applicable hooks pass; final two-axis review has no blockers. New task-directory collection→fit CLI roundtrip passed with default CUDA/no viewer. Commit/push and closure of parent #4 plus implemented children #5–#13 are authorized and in progress. Software evidence does not assert human GUI/physical acceptance.
 
 ## Delivery
 
@@ -95,3 +95,7 @@ Collection follow-up: removed action-transform handling, prepacked commands, typ
 Kitless CLI follow-up authorized by user “修改代码解决上述问题”: replaced generic launcher argument registration with pure project argparse flags in the existing helper. Both scripts retain official preset/runtime resolution. Regression red/green confirms no parsing-time isaacsim import. Default ANYmal Newton CLI completed with EULA variable absent; explicit PhysX branch also completed with previously authorized test-only acceptance. 92 tests passed; Pyright0; source and evidence recorded in verification.md. No external source changes or inclusion of user task-config edits.
 
 Fitting throughput completion: CPU timestamps, reusable full-state buffers, batch-compatible tell, batched candidate/statistics transfers. 94passed with2 known cmaes warnings; Pyright0; both review axes clear. Controlled mixed optimization passed both backends. ANYmal Newton adapted fit benchmark1.430824→1.296856s; direct old CMA class benchmark.200980→.032495s; scope/variability and all raw results recorded. User fit data-path edit and other existing changes kept unstaged. Await explicit Verify authorization.
+
+User requested fit CLI defaults cuda and no visualization. Updated fit.py to emit visualizer=none by default and apply the selected device to env_cfg.sim.device before launch. Parser checks confirmed defaults and explicit --device cpu --visualizer newton_gl overrides, with EULA variable absent; git diff --check passed. Existing user fit data-path edit preserved; no simulation or commit for this small default change.
+
+User explicitly requested “将当前修改规范化提交，然后推送到远程并关闭对应的issue”. This supersedes earlier no-push/no-tracker-write status. Included current user trajectory, directory and task-config edits; updated docs and fixed static typing/formatting without changing physical settings. Final checks recorded in verification.md. Issue closeout follows explicit user instruction and does not invent unrecorded manual acceptance.

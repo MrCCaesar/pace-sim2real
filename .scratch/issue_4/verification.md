@@ -261,3 +261,13 @@ New public-boundary tests: hand-computed batched mixed loss and matching best tr
 Independent Standards and Spec reviewers found no material issue. They requested explicit batch/memory documentation and bounded benchmark claims, recorded above. User changes to collection, task configs and the fit data path are preserved and excluded from the performance patch.
 
 Final checks: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run python -m pytest -q` —94passed,2 existing upstream cmaes warnings,26.60s; targeted Pyright0. Formatting hooks corrected test formatting on the first pass; applicable changed-file hooks passed on recheck (existing missing license-template skip remains).
+
+### User-authorized final normalization and release
+
+Included current user edits: task-name collection/fit directories, task data_dir=chirp_data.pt, current trajectory values/directions, removal of unused PaceCfg.robot_name, fitting defaults cuda/no viewer. Updated usage/tutorial examples; normalized task configuration formatting and annotated dynamic Isaac Lab configclass APIs without changing behavior. Added only the legitimate ANYmal joint abbreviation haa to codespell's word exceptions.
+
+Final checks:94tests passed in25.70s with2 known upstream cmaes warnings. Pyright0 includes both task configs. All applicable changed-file hooks pass; pre-existing missing license template remains explicitly skipped. Both final review axes found no blocker.
+
+New-directory real CLI roundtrip, with EULA variable absent and PACE_ROOT=/tmp/pace-kitless-anymal: ANYmal collection2env/.01s exit0/16.005s; fit2env/1generation with no device/viewer flags exit0/16.005s (CUDA/default no viewer). These are entry/path/default software checks, not convergence or physical acceptance. Full commands/results retained in cr2-implement-results.json.
+
+User explicitly authorized commit, push and closure of corresponding issues. Closeout covers parent#4 and implementation children#5–#13 under the latest approved amendments, including config-owned action transforms and Newton warn/disable ratio semantics. Earlier issue wording is superseded by recorded user decisions. Manual GUI/camera/window-manager evidence and user-owned physical-model validation are not claimed by this release; historical status records remain intact.

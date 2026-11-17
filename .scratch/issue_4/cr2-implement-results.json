@@ -598,5 +598,46 @@
     },
     "review": "Both independent axes found no material defect; benchmark limitations and batch memory/interface documented",
     "scope": "Performance measured for disclosed workloads only; current lifecycle shared by actual fit adapter. User collection/config/path edits excluded; IsaacLab unmodified."
+  },
+  "release_checks": {
+    "authorization": "User requested normalized commit of all current changes, push and close corresponding issues",
+    "full_suite": "94 passed, 2 known cmaes warnings in 25.70s",
+    "typecheck": "0 errors, 0 warnings including both task configs",
+    "hooks": "Applicable changed-file hooks passed; narrow haa domain-word exception added; existing missing license template skipped",
+    "review": "Both axes: no blocking findings",
+    "runs": {
+      "collection": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/scripts/pace/data_collection.py",
+          "--task",
+          "Isaac-Pace-Anymal-D-v0",
+          "--num_envs",
+          "2",
+          "--duration",
+          ".01",
+          "--visualizer",
+          "none"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 16.005,
+        "stop_reason": null
+      },
+      "fit": {
+        "command": [
+          "/home/sevnce-mr/pace-sim2real/.venv/bin/python",
+          "/home/sevnce-mr/pace-sim2real/scripts/pace/fit.py",
+          "--task",
+          "Isaac-Pace-Anymal-D-v0",
+          "--num_envs",
+          "2",
+          "env.sim2real.cmaes.max_iteration=1"
+        ],
+        "returncode": 0,
+        "elapsed_seconds": 16.005,
+        "stop_reason": null
+      }
+    },
+    "scope": "Headless software acceptance only; no assertion of manual camera/window-manager close or physical-model validity"
   }
 }

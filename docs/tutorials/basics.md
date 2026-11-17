@@ -58,8 +58,7 @@ ANYDRIVE_PACE_ACTUATOR_CFG = PaceDCMotorCfg(
 @configclass
 class AnymalDPaceCfg(PaceCfg):
     """Pace configuration for Anymal-D robot."""
-    robot_name: str = "anymal_d_sim"
-    data_dir: str = "anymal_d_sim/chirp_data.pt"  # located in pace_sim2real/data/anymal_d_sim/chirp_data.pt
+    data_dir: str = "chirp_data.pt"  # relative to data/Isaac-Pace-Anymal-D-v0/
     bounds_params: torch.Tensor = torch.zeros((49, 2))  # 12 + 12 + 12 + 12 + 1 = 49 parameters to optimize
     separate_dynamic_friction: bool = True  # appends 12 dynamic/static friction ratios -> 61 parameters
     joint_order: list[str] = [
@@ -166,8 +165,8 @@ class AnymalDPaceCfg(PaceCfg):
 
 The `AnymalDPaceCfg` block defines algorithmic parameters and data linkage:
 
-* `robot_name`: determines logging directory
-* `data_dir`: path to recorded trajectory data
+* Task name determines the collection and logging directories.
+* `data_dir`: trajectory filename relative to `data/<task-name>/`
 * `joint_order`: alignment with real data
 * `bounds_params`: optimization limits
 * `separate_dynamic_friction`: identify static and dynamic friction separately (defaults to `False`, i.e. Coulomb friction with static = dynamic)
@@ -315,7 +314,7 @@ pace-sim2real/source/pace_sim2real/pace_sim2real/optim/cma_es.py
 All optimization logs are stored under:
 
 ```
-pace-sim2real/logs/pace/anymal_d_sim
+pace-sim2real/logs/pace-sim2real/Isaac-Pace-Anymal-D-v0
 ```
 
 Key files include:
@@ -341,7 +340,7 @@ Additional files include:
 During or after optimization, visualize the current best trajectory using:
 
 ```bash
-python scripts/pace/plot_trajectory.py --plot_trajectory --robot_name=anymal_d_sim
+python scripts/pace/plot_trajectory.py --plot_trajectory --robot_name=Isaac-Pace-Anymal-D-v0
 ```
 
 After completion, include `--plot_score` to visualize convergence behavior over iterations if desired.

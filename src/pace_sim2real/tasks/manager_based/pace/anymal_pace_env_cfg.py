@@ -2,13 +2,15 @@
 # Author: Filip Bjelonic
 # Licensed under the Apache License 2.0
 
-from isaaclab.utils import configclass
+from typing import Any, cast
 
-from isaaclab_assets.robots.anymal import ANYMAL_D_CFG
-from isaaclab.assets import ArticulationCfg
-from pace_sim2real.utils import PaceDCMotorCfg
-from pace_sim2real import PaceSim2realEnvCfg, PaceSim2realSceneCfg, PaceCfg
 import torch
+from isaaclab.assets import ArticulationCfg
+from isaaclab.utils import configclass
+from isaaclab_assets.robots.anymal import ANYMAL_D_CFG
+
+from pace_sim2real import PaceCfg, PaceSim2realEnvCfg, PaceSim2realSceneCfg
+from pace_sim2real.utils import PaceDCMotorCfg
 
 ANYDRIVE_PACE_ACTUATOR_CFG = PaceDCMotorCfg(
     joint_names_expr=[".*HAA", ".*HFE", ".*KFE"],
@@ -30,8 +32,8 @@ ANYDRIVE_PACE_ACTUATOR_CFG = PaceDCMotorCfg(
 @configclass
 class AnymalDPaceCfg(PaceCfg):
     """Pace configuration for Anymal-D robot."""
-    robot_name: str = "anymal_d_sim"
-    data_dir: str = "anymal_d_sim/chirp_data.pt"  # located in pace_sim2real/data/anymal_d_sim/chirp_data.pt
+
+    data_dir: str = "chirp_data.pt"  # located in pace_sim2real/data/Isaac-Pace-Anymal-D-v0/chirp_data.pt
     bounds_params: torch.Tensor = torch.zeros((49, 2))  # 12 + 12 + 12 + 12 + 1 = 49 parameters to optimize
     separate_dynamic_friction: bool = True  # appends 12 dynamic/static friction ratios -> 61 parameters
     joint_order: list[str] = [
@@ -63,14 +65,17 @@ class AnymalDPaceCfg(PaceCfg):
 @configclass
 class ANYmalDPaceSceneCfg(PaceSim2realSceneCfg):
     """Configuration for Anymal-D robot in Pace Sim2Real environment."""
-    robot: ArticulationCfg = ANYMAL_D_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot", init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
-                                                  actuators={"legs": ANYDRIVE_PACE_ACTUATOR_CFG})
-    robot.spawn.fix_root_link = True
+
+    robot: ArticulationCfg = cast(Any, ANYMAL_D_CFG).replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 1.0)),
+        actuators={"legs": ANYDRIVE_PACE_ACTUATOR_CFG},
+    )
+    cast(Any, robot.spawn).fix_root_link = True
 
 
 @configclass
 class AnymalDPaceEnvCfg(PaceSim2realEnvCfg):
-
     scene: ANYmalDPaceSceneCfg = ANYmalDPaceSceneCfg(num_envs=4096, env_spacing=2.5)
     sim2real: PaceCfg = AnymalDPaceCfg()
 

@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None):
     env_cfg.sim2real.wheel_order = list(wheels)
     env_cfg.sim2real.joint_order = list(legs + wheels)
     apply_env_overrides(args_cli, env_cfg)
-    args_cli.device = env_cfg.sim.device
+    env_cfg.sim.device = args_cli.device
 
     pre_launch_video_config(env_cfg, args_cli)
     # create environment
@@ -89,7 +89,9 @@ def main(argv: list[str] | None = None):
 
         legs, wheels = resolve_joint_groups(env_cfg.sim2real)
         cfg = env_cfg.sim2real
-        data = load_reference_data(project_root() / "data" / cfg.data_dir, cfg, env.unwrapped.step_dt)
+        data = load_reference_data(
+            project_root() / "data" / normalize_task_name(args_cli.task) / cfg.data_dir, cfg, env.unwrapped.step_dt
+        )
         settings = {
             key: getattr(cfg, key)
             for key in (
@@ -195,8 +197,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     add_video_args(parser, action="the diffdrive agent run")
     add_runtime_args(parser)
-    # let task configs select the simulation device and keep checkpoint-free agents on the kitless default path
-    parser.set_defaults(device=None, visualizer=["newton_gl"])
+    # Fit on CUDA without a viewer unless explicitly overridden on the command line.
+    parser.set_defaults(device="cuda", visualizer=[])
     arguments = fuse_kit_args(sys.argv[1:] if argv is None else argv)
     args_cli, hydra_args = setup_preset_cli(parser, arguments)
     args_cli.device_explicit = args_cli.device is not None

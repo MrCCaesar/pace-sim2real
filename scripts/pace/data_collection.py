@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None):
             actuator.update_encoder_bias(bias[:, drive_joint_idx])
             actuator.reset(env_ids)
 
-        data_dir = project_root() / "data" / env_cfg.sim2real.robot_name
+        data_dir = project_root() / "data" / normalize_task_name(args_cli.task)
 
         # Create a chirp signal for each action dimension
         duration = args_cli.duration  # seconds
@@ -210,10 +210,10 @@ def main(argv: list[str] | None = None):
         leg_trajectory = torch.zeros((num_steps, len(leg_ids)), device=env.unwrapped.device)
         leg_trajectory[:, :] = chirp_signal.unsqueeze(-1)
         leg_trajectory_directions = torch.tensor(
-            [1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0], device=env.unwrapped.device
+            [1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0], device=env.unwrapped.device
         )
-        leg_trajectory_bias = torch.tensor([0.0, 0.4, 0.8] * 4, device=env.unwrapped.device)
-        leg_trajectory_scale = torch.tensor([0.25, 0.5, -2.0] * 4, device=env.unwrapped.device)
+        leg_trajectory_bias = torch.tensor([0.0, 0.4, -1.4] * 4, device=env.unwrapped.device)
+        leg_trajectory_scale = torch.tensor([0.25, 0.5, 0.99] * 4, device=env.unwrapped.device)
         leg_trajectory[:, :] = (
             (leg_trajectory + leg_trajectory_bias.unsqueeze(0))
             * leg_trajectory_directions.unsqueeze(0)

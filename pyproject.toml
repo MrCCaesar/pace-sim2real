@@ -160,6 +160,8 @@ markers = [
 ]
 
 [tool.codespell]
+# HAA is the hip abduction/adduction joint name used by ANYmal.
+ignore-words-list = "haa"
 skip = "*.usd,*.usda,*.usdc,*.json,*.onnx,*.pt,*.mp4,*.data,uv.lock,logs"
 
 [[tool.uv.index]]
