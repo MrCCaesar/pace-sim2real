@@ -104,3 +104,13 @@ Initial Standards review: one handoff/documentation inconsistency (stale not-imp
 - Final `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/pytest -q`: **70 passed in 13.69 s**, no warnings. Final Pyright command above: 0 errors/warnings. Ruff formatting/check and all applicable affected-file pre-commit hooks passed (same pre-existing insert-license exception).
 
 These checks belong to Implement; formal Verify and manual camera/window-close acceptance remain outstanding.
+
+
+### CR1 two-axis review result
+
+Fixed point explicitly approved by user: 3a02f00. Reviewed cumulative committed diff through 3076912, with initial implementation 2d1f78d. Independent fresh-context Standards and Spec agents performed read-only reviews, then re-reviewed the follow-up fixes.
+
+- Standards: initial one minor current-status documentation inconsistency resolved; no remaining material findings. No additional code-smell refactoring warranted.
+- Spec: initial one P2 cancellation cleanup gap and one timing-evidence gap resolved; no remaining material deviations. Explicit IPC release also has a regression test.
+
+Reviewers did not execute tests; runtime evidence above was executed by the implementing agent. Manual camera/window-manager close and formal Verify remain pending, explicitly distinct from implementation findings. No push or GitHub issue-state changes were performed.

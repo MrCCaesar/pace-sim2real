@@ -113,3 +113,5 @@ User requested “继续尝试发布”. Read-only issue listing confirmed no CR
 Read-back verified exact body equality with approved ticket bodies, ready-for-agent labels, membership in #4's native sub-issue list and empty native blocked_by arrays for both tasks. Parent title/body/comments/state unchanged. This completion supersedes the earlier unresolved-publication status; no duplicate issues were created. Plan is complete. Next stage Implement requires explicit user approval; no production changes or runtime tests performed during publication.
 
 CR1 implementation update: #8/#9 implemented against approved contracts; automated and bounded native smoke evidence is in verification.md under implementation checks. Code review and formal Verify status are tracked in status.md.
+
+CR1 Implement complete: #8/#9 delivered in 2d1f78d with cleanup/review fixes in 3076912. Two-axis review has no remaining material findings. See verification.md implementation evidence; parent formal Verify remains separately gated. GitHub tasks remain open; no automatic tracker state changes.

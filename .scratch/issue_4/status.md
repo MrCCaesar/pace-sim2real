@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR1 Implement — #8/#9 implemented in 2d1f78d; review follow-up fixes under validation. Confirmed review base 3a02f00. Formal Verify/manual GUI acceptance not yet entered.
+Current stage: CR1 Implement complete — #8/#9 implemented and committed (2d1f78d, 3076912). Two-axis review against 3a02f00 has no remaining material findings. Awaiting explicit Verify approval; manual GUI acceptance remains pending.
 
 ## Delivery
 
@@ -47,3 +47,5 @@ CR1 publication recovered after user requested retry. #8 independent trajectory 
 CR1 implementation checks: 67 tests passed; Pyright/Ruff passed; native X5 40-sample GUI/headless data exactly equal after renderer shutdown fix. Commit preparation and two-axis review pending; manual GUI and formal Verify remain outstanding. User confirmed comparison base 3a02f00. Commit authorized by invoked implement skill; no push/tracker changes authorized.
 
 Review follow-up fixes validated: cancellation during escalation reaps child, timing tests directly observe capped publication/skipped frames, and IPC release no longer waits for traceback GC. Final full suite 70 passed in 13.69 s without warnings; Pyright0 and applicable pre-commit hooks passed. Follow-up commit and reviewer confirmation pending.
+
+Final CR1 handoff: both independent reviewers confirmed no remaining material Standards/Spec findings after 3076912. Complete test suite70 passed13.69s, no warnings; Pyright0; applicable pre-commit hooks passed with the pre-existing missing-license-template exception. Real X5 mixed-sign GUI/headless short runs produced identical five-tensor datasets. Work committed on current branch per implement skill. User-owned unstaged changes/assets preserved; no push or issue state changes. Next: user-approved Verify, including explicit manual camera/window-manager close evidence and acceptance reconciliation.
