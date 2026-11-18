@@ -88,16 +88,17 @@ python scripts/pace/fit.py \
 python scripts/pace/plot_trajectory.py
 ```
 
-This utility visualises the optimized trajectory and/or the evolution of the score over iterations. If no `folder_name` argument is given, the script will use the most recent evolution.
+This utility inspects the paired best candidate and optionally plots trajectories or generation scores. It defaults to task `Isaac-Pace-Anymal-D-v0`. Without `--folder_name`, it selects the latest run containing all requested files, skipping incomplete runs. Current `logs/pace-sim2real/<task>/` directories take precedence; historical `logs/pace/<task>/` directories remain readable.
 
 ### Common arguments
 
 | Argument            | Description                                     |
 | ------------------- | ----------------------------------------------- |
-| `--folder_name`     | Name of the optimization output folder          |
+| `--task` | Task ID, matching the fitting command; namespace prefixes accepted |
+| `--folder_name`     | Explicit run directory, otherwise latest complete requested output |
 | `--result_name` | Paired evaluated result (default `best_result.pt`) |
 | `--mean_name` | Distribution mean diagnostics only; not a trajectory selector |
-| `--robot_name`      | Task directory name (legacy option name)        |
+| `--robot_name`      | Legacy directory selector; mutually exclusive with `--task` |
 | `--plot_trajectory` | Plot the optimized joint trajectories           |
 | `--plot_score`      | Plot the score over iterations                  |
 
@@ -106,7 +107,7 @@ This utility visualises the optimized trajectory and/or the evolution of the sco
 ```bash
 python scripts/pace/plot_trajectory.py \
   --folder_name 24_03_12_14-32-10 \
-  --robot_name Isaac-Pace-Anymal-D-v0 \
+  --task Isaac-Pace-Anymal-D-v0 \
   --plot_trajectory
 ```
 
@@ -145,3 +146,5 @@ Collection and fitting register their runtime CLI flags locally, without loading
 Fitting prepares commands once, keeps timestamp checks on CPU and reuses device state buffers across generations. Scoring occurs after a complete valid rollout; automatic termination still stops immediately. `CMAESOptimizer.tell` accepts both individual `[population, joints]` samples and `[population, samples, joints]` chunks, with the same bias and group-loss semantics. Full-state fitting buffers require 8*(samples+1)*population*robot_joints bytes in addition to optimizer/reference storage.
 
 Isaac Lab collection writes `data/<task-name>/chirp_data.pt`; fitting reads `data/<task-name>/<data_dir>`, with task configs defaulting `data_dir` to `chirp_data.pt`. Namespace prefixes are removed from task names. Existing files are not moved automatically. Fitting defaults to `--device cuda` and no visualizer; use `--device cpu` or `--visualizer newton_gl` to override. These defaults do not change the selected physics preset.
+
+Plotting validates schema-v2 candidate metadata, joint groups, time, measured/desired/fitted tensor shapes and finite values, then recomputes stored errors. Invalid records produce a diagnostic instead of a late plotting failure. `--plot_score` requires a run containing `progress.pt`, generated with `cmaes.save_optimization_process=True`. `--mean_name` remains parameter-only diagnostics and cannot be combined with `--result_name` or `--plot_trajectory`; no bias is subtracted again from saved fitted positions.

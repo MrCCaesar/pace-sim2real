@@ -807,3 +807,112 @@ for fault in (None, "transient", "final", "termination", "clock"):
         timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def paired_plot_record():
+    """A complete one-leg record with independently known MSE=5."""
+    return {
+        "schema_version": 2,
+        "leg_order": ["leg"],
+        "wheel_order": [],
+        "time": torch.tensor([0.0, 0.01], dtype=torch.float64),
+        "reference": {"dof_pos": torch.zeros(2, 1), "des_dof_pos": torch.ones(2, 1)},
+        "sim_dof_pos": torch.tensor([[1.0], [3.0]]),
+        "params": torch.zeros(5),
+        "parameter_names": ["armature:leg", "damping:leg", "friction:leg", "encoder_bias:leg", "delay"],
+        "generation": 2,
+        "candidate_index": 0,
+        "delay_steps": 0,
+        "delay_seconds": 0.0,
+        "score": 5.0,
+        "position_rmse": 5**0.5,
+        "velocity_rmse": None,
+        "settings": {
+            "position_error_scale": 1.0,
+            "position_weight": 1.0,
+            "velocity_error_scale": 1.0,
+            "velocity_weight": 1.0,
+        },
+    }
+
+
+def test_plot_cli_uses_current_task_directory_and_skips_incomplete_runs(tmp_path, monkeypatch, capsys):
+    plotter = load_module("pace_task_plot", "scripts/pace/plot_trajectory.py")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    task_root = tmp_path / "logs" / "pace-sim2real" / "Isaac-Pace-Anymal-D-v0"
+    completed = task_root / "completed"
+    completed.mkdir(parents=True)
+    torch.save(paired_plot_record(), completed / "best_result.pt")
+    (task_root / "incomplete").mkdir()
+    assert plotter.main([]) == 0
+    output = capsys.readouterr().out
+    assert "generation=2" in output
+    assert "score" in output
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing_desired", "nonfinite_time", "reversed_time", "missing_identity", "wrong_score"]
+)
+def test_plot_loader_reports_invalid_paired_records(tmp_path, mutation):
+    plotter = load_module("pace_checked_plot", "scripts/pace/plot_trajectory.py")
+    result = paired_plot_record()
+    if mutation == "missing_desired":
+        del result["reference"]["des_dof_pos"]
+    elif mutation == "nonfinite_time":
+        result["time"][1] = float("nan")
+    elif mutation == "reversed_time":
+        result["time"] = result["time"].flip(0)
+    elif mutation == "missing_identity":
+        del result["candidate_index"]
+    elif mutation == "wrong_score":
+        result["score"] = 4.0
+    path = tmp_path / "best_result.pt"
+    torch.save(result, path)
+    with pytest.raises(ValueError):
+        plotter.load_result(path)
+
+
+def test_plot_cli_supports_task_namespace_legacy_run_and_score_curve(tmp_path, monkeypatch, capsys):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    plotter = load_module("pace_legacy_run_plot", "scripts/pace/plot_trajectory.py")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    task = "Isaac-Pace-Anymal-D-v0"
+    (tmp_path / "logs" / "pace-sim2real" / task).mkdir(parents=True)
+    run = tmp_path / "logs" / "pace" / task / "saved"
+    run.mkdir(parents=True)
+    torch.save(paired_plot_record(), run / "best_result.pt")
+    torch.save({"scores_buffer": torch.tensor([[9.0, 7.0], [5.0, 6.0]])}, run / "progress.pt")
+    monkeypatch.setattr(plt, "show", lambda: None)
+    try:
+        assert (
+            plotter.main(["--task", "namespace:" + task, "--folder_name", "saved", "--plot_trajectory", "--plot_score"])
+            == 0
+        )
+        figures = [plt.figure(number) for number in plt.get_fignums()]
+        assert len(figures) == 2
+        torch.testing.assert_close(torch.tensor(figures[0].axes[0].lines[2].get_ydata()), torch.tensor([1.0, 3.0]))
+        torch.testing.assert_close(torch.tensor(figures[1].axes[0].lines[0].get_ydata()), torch.tensor([7.0, 5.0]))
+        assert plotter.main(["--robot_name", task, "--folder_name", "saved"]) == 0
+        assert "generation=2" in capsys.readouterr().out
+        with pytest.raises(SystemExit) as error:
+            plotter.main(["--task", task, "--robot_name", task])
+        assert error.value.code == 2
+    finally:
+        plt.close("all")
+
+
+def test_plot_mean_diagnostics_do_not_require_or_invent_paired_response(tmp_path, monkeypatch, capsys):
+    plotter = load_module("pace_mean_plot", "scripts/pace/plot_trajectory.py")
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    run = tmp_path / "logs" / "pace-sim2real" / "Isaac-Pace-Anymal-D-v0" / "mean-only"
+    run.mkdir(parents=True)
+    torch.save(torch.tensor([0.1, 0.2]), run / "mean_000.pt")
+    assert plotter.main(["--mean_name", "mean_000.pt"]) == 0
+    assert "not an evaluated response" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as error:
+        plotter.main(["--mean_name", "mean_000.pt", "--plot_trajectory"])
+    assert error.value.code == 2

@@ -226,3 +226,7 @@ After the installed Isaac Sim package triggered EULA during generic launcher arg
 ### Fitting performance follow-up — User authorized
 
 User requested the same ecefbfe-baseline throughput/readability requirements for fit.py and cma_es.py. Keep current physics, initialization, grouping, weighting, best-pair contract and standalone single-sample tell support. Execute simulation with contiguous state buffers and evaluate completed rollouts in batches; validate full states including the last step before evolution. Batch population and generation CPU/device transfers. Record exact benchmark workload/adaptations and avoid claiming universal or unmodified end-to-end performance from an adapted reference loop.
+
+### Post-release plotting refactor — User requested
+
+Refactor the current plot_trajectory.py around current task-named log directories and paired schema-v2 output, retaining existing plot/mean compatibility. Separate result validation, run discovery, numerical errors and rendering; add the matching --task selector while retaining --robot_name, skip runs without required outputs, and report malformed records before rendering. Preserve measured-frame positions, wheel velocity units and actual evaluated candidate identity. No simulator, optimizer, loss, physics or dataset changes; existing closed issue states are not changed by this follow-up.

@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: User-authorized release/closure complete. Code commit 5ace954 pushed to origin/main; parent #4 and implemented children #5–#13 closed with completed reason and individually read back as CLOSED. 94 tests, Pyright and applicable hooks pass; final review clear. Human GUI/physical acceptance is not asserted. Closure receipt synchronized in cr2-implement-results.json.
+Current stage: User-requested post-release plotting refactor / Implement complete, committed locally. Current task-directory selection, compatible legacy selectors, complete paired-record diagnostics and separated plotting responsibilities implemented. 102 tests passed, Pyright0; existing real pure-leg and Newton/PhysX mixed results read/plotted without simulations. Prior release/Issue closure history remains unchanged; no new push or tracker operation.
 
 ## Delivery
 
