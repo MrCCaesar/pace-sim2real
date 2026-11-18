@@ -296,3 +296,28 @@ The baseline uses the exact fit entry point and optimizer sources from 912c7a6. 
 For the short workload the observed scene creation times ranged from 2.81 to 9.80 seconds. The short-workload entry timer did not establish a 10% reduction. Every X5 run produced equal loaded fit configuration, evaluated best record and periodic means, and identical values and steps in all 61 histogram and 128 scalar tags. Timing raw data and the comparison driver are in the temporary experiment directory `/tmp/pace-opt-912c7a6-zmMWqiU9/`. The comparison covers loaded output values and steps on the same hardware. Each run has its own event wall times.
 
 An additional ANYmal Newton run (two environments, 40 samples, two generations, position-action scale 0.75 and offset 0.1, progress saving enabled) produced matching configuration, best result, means, population history and all 152 TensorBoard tags. This was a pure-position compatibility check. The unchanged suite passed with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q --tb=short` (104 passed, four existing cmaes warnings). Targeted Pyright reported zero errors; the optimizer Ruff check, formatting of both changed Python files and `git diff --check` passed.
+
+## CR3 Verify — 完成，2026-11-18
+
+验收对象为提交 `d8e0480` 和 #14–#16。使用 `git archive d8e0480` 导出独立源码，仅共享本机机器人资产及项目虚拟环境。X5 使用 Newton、RTX A5000、2 个环境、无实时查看器，步长 0.0025 s。仿真串行执行，启动前可用 RAM 18175 MiB、显存 22618 MiB。
+
+| 条件 | 结果与证据 |
+| --- | --- |
+| A1 · 入口与最新运行 | 通过。固定参数采集、显式回放及最新运行回放均成功。较早完整运行、较新缺文件运行和录像目录并存时，裸 `--fit_result` 退出码为 1，报告最新拟合运行缺失文件的完整路径。 |
+| A2 · 参数兼容与映射 | 通过。分别逆序排列真实 X5 结果中的腿、轮关节及其配对轨迹，独立打乱 61 项具名参数后再回放，两组响应与原最佳候选逐样本最大差均为 0。契约测试覆盖名称和物理设置冲突、旧双时步、纯腿与混合、Newton 干摩擦及 PhysX 有／无摩擦比例。 |
+| A3 · 初态、误差与曲线 | 通过。X5 首帧腿实测与期望最大差为 0.13273692 rad，实测轮速最大绝对值为 0.04865251 rad/s。回放首帧与实测一致。手算样例得到位置 RMSE 2 rad、轮速 RMSE 5 rad/s。Agg 下逐一核对 16 个具名关节的图例和全部横纵坐标，有实测时每关节三条曲线，仅命令时两条。 |
+| A4 / Q7 · 原轨迹复现与独立预测 | 通过。取移动中的 32 帧做一代拟合，同轨迹最大绝对差为位置 0 rad、轮速 0 rad/s，分别满足 0.0001 rad、0.001 rad/s 的短程复现容差。独立采集 4–8 Hz 短扫频，得到腿位置预测 RMSE 0.020504419 rad、轮速预测 RMSE 1.617103 rad/s。另行注入测量偏差后，最大误差达到 1 rad 和 3.2122221 rad/s，仍正常播放、绘图和保存。 |
+| A5 · CLI 与文件保护 | 通过。覆盖裸回放选项紧跟 Hydra 预设、显式另存、文件轨迹与扫频参数互斥。默认回放保留原采集文件字节。显式输出指向拟合结果、轨迹输入、自定义拟合参考文件和常规采集文件时均被拒绝。 |
+
+**命令与结果。** 以下命令在导出的源码根目录执行，`$PY` 为项目虚拟环境的 Python，`$EVIDENCE` 为本机临时目录 `/tmp/pace-cr3-verify-fPGxka9T`。
+
+```bash
+PYTHONPATH="$PWD/src" PACE_RUN_REPLAY_INTEGRATION=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 MPLBACKEND=Agg timeout -k 5 340 "$PY" -m pytest -q -s --tb=short --basetemp="$EVIDENCE/test-data"
+uvx --offline pyright --pythonpath "$PY" scripts/pace src/pace_sim2real/utils tests/test_fit_replay.py tests/test_mixed_collection_fit.py
+ruff check scripts/pace/data_collection.py src/pace_sim2real/utils/fit_replay.py tests/test_fit_replay.py
+ruff format --check scripts/pace/data_collection.py src/pace_sim2real/utils/fit_replay.py tests/test_fit_replay.py
+```
+
+pytest **126 passed**（110.11 s），4 条既有 cmaes 除零告警。Pyright 为 0 错误、0 警告，Ruff 检查与格式通过。补充探针及其日志在同一临时目录，分别为 `check_reordered.py` / `supplement.log` 和 `check_plots.py` / `plots.log`。
+
+**证据边界。** 本轮从实施阶段保留的 ANYmal / Isaac Sim PhysX 单一 dt 结果及回放文件独立复算，61 项参数、12 帧、三字段输出，位置最大绝对差为 0 rad。本轮未重新启动 PhysX。独立预测结果为仿真数据；人工 GUI 体验及实机预测质量由用户验收。

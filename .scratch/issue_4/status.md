@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR3 Implement 已完成 — #14–#16 已实施并本地提交。126 项测试通过，类型检查通过，规范与规格审查意见均已处理。X5 Newton 与 ANYmal Isaac Sim PhysX 的短程同轨迹回放通过 Q7；X5 独立轨迹分组 RMSE 和超限播放另行验证。详见 plan.md 的 CR3 Implement 记录。待用户批准进入 Verify。
+Current stage: CR3 Verify 已完成 — 提交 d8e0480 的 A1–A5 及 Q7 软件验收通过。隔离源码全量测试 126 项通过，实际乱序参数回放、独立扫频、超限播放与绘图数据已复核。证据、命令及 PhysX 复算范围见 verification.md 的 CR3 Verify。
 
 Previous stage: User-requested post-release plotting refactor / Implement complete, committed locally. Current task-directory selection, compatible legacy selectors, complete paired-record diagnostics and separated plotting responsibilities implemented. 102 tests passed, Pyright0; existing real pure-leg and Newton/PhysX mixed results read/plotted without simulations. Prior release/Issue closure history remains unchanged; no new push or tracker operation.
 
