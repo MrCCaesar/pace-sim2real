@@ -271,3 +271,15 @@ Post-implementation user amendment executed within existing files: config-owned 
 - [#16 用采集轨迹验证预测响应](https://github.com/MrCCaesar/pace-sim2real/issues/16) 依赖 #14。
 
 进入 Implement 需另行批准，从 #14 开始。正式 Verify 按 A1–A5 汇总证据，分别记录同轨迹复现和独立轨迹验证的输入、运行条件与分组误差。Isaac Lab 的运行依仓库资源约束顺序执行。
+
+
+### CR3 Implement · 测试与审查记录
+
+已按 #14–#16 接通固定参数采集、显式／最新拟合回放与文件轨迹验证。基线为用户确认的 `912c7a6`，功能提交 `8b29bc1`，首轮审查修正 `1f5e88d`。使用示例见 [usage.md](../../docs/usage.md#replay-a-fitted-candidate-in-isaac-lab)。
+
+- `PACE_RUN_REPLAY_INTEGRATION=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -m pytest -q --tb=short`：126 项通过，4 条已有 CMA 运行警告。X5 多次启动的集成用例默认按需启用；测试先检查 RAM/VRAM，2 个环境，无实时查看器，单进程超时 120 秒。
+- `uvx --offline pyright --pythonpath .venv/bin/python scripts/pace src/pace_sim2real/utils tests/test_fit_replay.py tests/test_mixed_collection_fit.py`：0 错误、0 警告。变更 Python 文件通过 Ruff。加严了重名和负值错误的断言，`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q tests/test_fit_replay.py -k 'duplicate or negative'` 两项通过。
+- X5 / Newton CUDA：取移动中的 32 帧做一代拟合，对同一候选逐样本复现，腿位置和轮速度最大绝对差均为 0。另一条单独采集的扫频得到腿位置预测 RMSE 0.020504419 rad、轮速度预测 RMSE 1.617103 rad/s。额外构造的超限测量仍可完整播放、以 Agg 绘图和保存。首次全量运行暴露测试进程污染了原生 MuJoCo 的导入隔离检查；将新增测试中的模拟器入口隔离到子进程后，全量通过。
+- ANYmal / Isaac Sim PhysX：在临时目录依次执行固定参数采集（0.03 s）、一代拟合和指定结果的文件回放。三次使用 `--task Isaac-Pace-Anymal-D-v0 --num_envs 2 --visualizer none physics=isaacsim_physx`，拟合额外使用 `env.sim2real.cmaes.max_iteration=1`，回放使用 `--fit_result PATH --trajectory_file INPUT --output OUTPUT`。新结果含 61 个参数和 12 帧位置响应，复现的最大绝对差为 0 rad，保存三字段。测试发现 Kit 关闭可能结束 Python，已将保存、绘图和指标报告移入启动器生命周期。本机缺少独立 ovphysx 包；此项实测使用用户已授权的 Isaac Sim PhysX。
+- 规范审查已复核资源预检、集成测试按需运行、配对时间和轨迹有限性。规格审查已复核自定义拟合参考文件保护、诊断中的参数名称和超限播放；独立轨迹的预测精度只报告，超限用例单独构造。本阶段检验自动绘图路径，人工 GUI 观察及正式 Verify 留待后续。
+- 对提交 1f5e88d 单独解包后，使用其已提交的拟合器、采集器和任务代码重跑 X5 集成用例，仅共用本机机器人资产及依赖。1 项通过，复现最大差与独立 RMSE 均与上述结果一致，确认 CR3 功能可独立于工作区内此前的拟合性能改动运行。

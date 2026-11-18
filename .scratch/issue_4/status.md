@@ -1,6 +1,6 @@
 # Issue #4 — Status
 
-Current stage: CR3 Implement — 用户授权实施 #14–#16 并指定 912c7a6 为审查基点。回放、运行选择和独立轨迹验证已接入采集入口，正在执行实施测试和双轴审查。
+Current stage: CR3 Implement 已完成 — #14–#16 已实施并本地提交。126 项测试通过，类型检查通过，规范与规格审查意见均已处理。X5 Newton 与 ANYmal Isaac Sim PhysX 的短程同轨迹回放通过 Q7；X5 独立轨迹分组 RMSE 和超限播放另行验证。详见 plan.md 的 CR3 Implement 记录。待用户批准进入 Verify。
 
 Previous stage: User-requested post-release plotting refactor / Implement complete, committed locally. Current task-directory selection, compatible legacy selectors, complete paired-record diagnostics and separated plotting responsibilities implemented. 102 tests passed, Pyright0; existing real pure-leg and Newton/PhysX mixed results read/plotted without simulations. Prior release/Issue closure history remains unchanged; no new push or tracker operation.
 
