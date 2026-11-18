@@ -230,3 +230,31 @@ User requested the same ecefbfe-baseline throughput/readability requirements for
 ### Post-release plotting refactor — User requested
 
 Refactor the current plot_trajectory.py around current task-named log directories and paired schema-v2 output, retaining existing plot/mean compatibility. Separate result validation, run discovery, numerical errors and rendering; add the matching --task selector while retaining --robot_name, skip runs without required outputs, and report malformed records before rendering. Preserve measured-frame positions, wheel velocity units and actual evaluated candidate identity. No simulator, optimizer, loss, physics or dataset changes; existing closed issue states are not changed by this follow-up.
+
+## CR3 — 拟合结果回放 · Specify / Q4–Q7 已确认
+
+CR3-R1–R4 是已确认需求。Q4 经用户修订，Q5、Q6 已确认，Q7 经用户确认仅用于软件验收。本节沿用 ADR 0005、0006、0008、0009、0010 的偏置、时间、关节分组和最佳候选语义。
+
+### 范围与职责
+
+采集入口负责区分固定参数采集与拟合回放，解析参数和轨迹来源，在首步前写入参数及初态。两种模式共用现有动作映射、执行器和采样循环。拟合器已有的配对结果足以作为输入。已确认的运行查找、错误行为和名称核对适用于纯腿及腿轮混合任务。
+
+### Q4–Q6 · 已确认
+
+- **Q4 · 结果兼容。** 用户指定“按照最新的单一dt格式皆可”。回放读取当前配对 v2 的 `settings.dt`，要求时步有限、为正，与任务物理时步一致，且任务 decimation=1。仅有旧 `physics_dt`、`control_dt` 的结果报告格式过时并停止。Research 中建议兼容历史 ANYmal 结果的方案已被此次决定取代。该决定按文件格式适用于所有任务；纯腿任务新生成的单一 dt 结果同样可回放。腿轮分组和物理参数按名称校验，后端、求解器、时步、反馈偏置语义及延迟模式按当前拟合输出核对。轨迹时间标签仍按任务声明解释。
+- **Q5 · 验证输入与初态。** 默认由现有扫频参数生成命令，使用采集初态（首个腿目标加拟合偏置，关节速度置零）。给出采集格式的轨迹文件时采用其全部有效采样，腿物理位置取首帧实测加拟合偏置，轮速取首帧实测，其他初始自由度取任务配置。文件的无名列按当前任务声明解释。若同时显式指定文件和扫频参数，提示二选一。回放清空执行器延迟历史，并按命令发出时刻记录期望值。
+- **Q6 · 输出。** 回放默认不写数据，显式输出时只保存本次模型响应及命令，沿用三／五字段格式；保护轨迹输入、拟合输入和常规采集路径。带实测文件时始终在终端报告物理 RMSE，打开已有绘图选项时叠加三条曲线。生成扫频时绘制期望与模型响应。命令和结果提示中给出实际使用的拟合文件及轨迹来源，便于复查。
+
+### 验收条件
+
+| 编号 | 可观测结果 |
+| --- | --- |
+| A1 / R1、R3 | 同一任务下有较早完整运行、较新未完成运行和录像目录时，自动回放报告较新的拟合目录及缺失文件；显式选择较早结果可运行。只传任务名仍执行固定参数采集。 |
+| A2 / R2 | 物理值逐关节可辨时，独立打乱结果中的组内顺序和命名参数排列，写入同一关节的值一致。缺失、重复、多余或跨组的关节在写入前被报告。覆盖当前单一 dt 的纯腿／混合结果、两种摩擦模型，以及仅有旧双时步的结果被明确拒绝。 |
+| A3 / R4 | 文件首帧腿实测与期望有差、首帧轮速非零时，第一条模型记录与首帧实测按组一致。用可手算的响应检验两个 RMSE；只含腿的任务只报告位置项。扫频与文件回放均保留步前命令/响应配对。 |
+| A4 / R1–R4 | 在相同任务配置、后端与初态下，用原拟合输入与已配对的最佳响应逐样本比对；另用一条有实测的不同轨迹验证预测误差。记录运行条件与数值差异，同输入复现精度与模型在新数据上的预测质量分别评价。|
+| A5 / R1、R4 | 覆盖三种命令行入口、裸选项紧跟 Hydra 预设、可选绘图与落盘。回放默认不生成采集文件，失败时输入和常规采集文件内容保持原样。 |
+
+假设显式验证文件的来源及无名列顺序由使用者掌握。
+
+**Q7 · 同轨迹数值验收（已确认）。** 在相同后端、任务配置、命令和初态下，将短程受控回放与配对结果中的模拟响应按采样时刻和关节名对齐。A4 的复现测试分别取全体样本与关节的最大绝对差，腿位置须 ≤ 0.0001 rad，有轮时轮速须 ≤ 0.001 rad/s。超限仅记为该项测试失败。这两个阈值只用于软件验收；普通回放通过输入兼容性校验后可完整播放、绘图并按需保存，即使拟合或跟踪误差较大。独立实测轨迹按 CR3-R4 报告分组预测 RMSE。

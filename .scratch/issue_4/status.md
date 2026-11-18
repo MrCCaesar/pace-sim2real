@@ -1,6 +1,8 @@
 # Issue #4 — Status
 
-Current stage: User-requested post-release plotting refactor / Implement complete, committed locally. Current task-directory selection, compatible legacy selectors, complete paired-record diagnostics and separated plotting responsibilities implemented. 102 tests passed, Pyright0; existing real pure-leg and Newton/PhysX mixed results read/plotted without simulations. Prior release/Issue closure history remains unchanged; no new push or tracker operation.
+Current stage: CR3 Implement — 用户授权实施 #14–#16 并指定 912c7a6 为审查基点。回放、运行选择和独立轨迹验证已接入采集入口，正在执行实施测试和双轴审查。
+
+Previous stage: User-requested post-release plotting refactor / Implement complete, committed locally. Current task-directory selection, compatible legacy selectors, complete paired-record diagnostics and separated plotting responsibilities implemented. 102 tests passed, Pyright0; existing real pure-leg and Newton/PhysX mixed results read/plotted without simulations. Prior release/Issue closure history remains unchanged; no new push or tracker operation.
 
 ## Delivery
 

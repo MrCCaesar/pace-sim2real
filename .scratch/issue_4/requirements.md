@@ -191,3 +191,29 @@ CR2 stage transition: user explicitly approved Research (“进入research”). 
 User clarified: “centers单独乘的direction已经去除，按照现在的(centers + np.sin(phase[:, None])) * amplitudes * directions，这样与data_collection.py中轨迹的生成保持一致”. The normalized-center formula is now authoritative for this requested alignment; it supersedes CR1's physical-center interpretation for forthcoming changes. Do not revert the user's native formula.
 
 The physical center equals centers * amplitudes * directions. The current native initialization/history still uses centers directly; this is a confirmed remaining inconsistency, not an approved startup jump. With current values, a thigh center coefficient0.4 and amplitude0.5 imply a physical center0.2 rad, while current initial qpos is0.4 rad. Aligning initial state/history, config descriptions, tests and examples must be carried into Specify/Implement. No revised numeric center coefficients/amplitudes were requested.
+
+## CR3 — Explore / Draft · 拟合结果回放与独立轨迹验证
+
+### 已确认
+
+- 用户批准进入 Explore，并同意上一轮的回放方案。原有固定参数采集仍有独立用途。
+- 在 Isaac Lab 中使用一次拟合全程最佳已评估候选的惯量、阻尼、摩擦、腿编码器偏置和共享延迟，观察其在另一条期望轨迹上的响应。适用已有纯腿、腿轮混合任务及各自的摩擦物理语义。
+- 回放默认从 `logs/pace-sim2real/<task>/` 的最新拟合 run 取 `best_result.pt`，任务由 `--task` 指定；也可明确选择结果文件。该规则针对参数来源，验证轨迹可以独立选择。
+- 支持调整扫频激励，也支持用既有采集文件的期望轨迹回放。有独立实测时可对齐初态，比较期望、实测和模型响应。验证输出与原始采集数据隔离，回放可按需另存。
+
+### 首轮问题与建议（已答复）
+
+1. 固定参数采集和自动选择结果的触发条件。建议单独给出 `--task` 继续固定参数采集，给出无路径的 `--fit_result` 即回放最新 run。另一种需求解释是只给任务名即自动回放，由用户显式选择固定参数采集。
+2. 最新拟合 run 缺少结果时的预期行为。建议提示所选 run 和缺少的文件并结束，由用户明确选择其他 run。
+3. 独立实测数据的验收输出。建议除曲线外分别报告腿位置与轮速度的预测 RMSE；本轮不预设拟合质量通过阈值。仅有期望轨迹时只能评价对命令的跟踪。
+
+### 首轮结论与 Explore 交接
+
+用户确认 Q1–Q3，并在 Q1 补充了显式结果文件的关节名称检查。
+
+- CR3-R1：只传 `--task X` 保留固定参数采集。`--task X --fit_result` 选择任务 X 的最新拟合 run。`--task X --fit_result PATH` 读取指定文件。
+- CR3-R2：显式指定文件也须核对其关节名称与任务配置。沿用已同意的按名称对齐方案，分别核对腿、轮组；组内仅排列不同可对齐，缺失、多余、重名或跨组的关节应报告差异并终止回放。
+- CR3-R3：选中最新拟合 run 后，若缺少 `best_result.pt`，提示所选目录和缺少的文件并停止。用户可以显式指定较早的结果。录像等非拟合目录不参与选择。
+- CR3-R4：提供独立实测时，绘制期望、实测和回放响应，以回放响应减实测响应分别报告腿位置预测 RMSE（rad）、轮速度预测 RMSE（rad/s，仅有轮任务）。仅有期望轨迹时展示命令跟踪。无需预设拟合质量通过阈值。
+
+当前 Explore 问题均已答复。待用户批准进入 Research 后，核对运行目录识别、结果兼容性、参考数据初态和现有绘图能力。阶段结论记录用户要求，具体实现和测试留待后续阶段。

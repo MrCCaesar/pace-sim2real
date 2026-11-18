@@ -250,3 +250,23 @@ The user's fitting-settings follow-up supersedes the two timestep fields above. 
 ### Joint-specific fit scales and CMA distribution means
 
 Each error scale accepts a float or list of floats, strictly positive and finite. Lists follow the corresponding leg or wheel order with exact group length, including zero for an empty wheel group. Group scores average joint MSE divided by squared joint scale. Saved raw RMSE uses physical units. The fitter and plotter use the same objective for scalar and list configurations. Every generation records the post-update CMA parameter mean in physical units to TensorBoard, using the generation index shared with the histogram and best-candidate tags.
+
+## CR3 — 采集入口的回放契约 · Q4–Q7 已确认
+
+三个入口模式、关节名称校验、最新运行缺文件时停止及分组误差来自 CR3-R1–R4。用户已确认 spec.md 的 Q4 修订及 Q5、Q6。回放拟合结果必须包含当前格式的 `settings.dt`（秒，有限正数），并匹配 decimation=1 的任务时步。仅提供旧双时步字段的文件报格式过时。该限制只针对拟合结果，外部轨迹文件的时间解释仍采用任务声明。
+
+| 输入 | 默认值与行为 |
+| --- | --- |
+| `--task X` | 使用原固定参数采集及原输出路径。 |
+| `--task X --fit_result` | 在与拟合入口相同的日志根 `logs/pace-sim2real/<规范化任务名>/` 选择启动时间最新的拟合运行。仅识别拟合器生成的时间戳子目录，先选目录再查 `best_result.pt`。无运行、文件缺失或不可读时报告路径并结束。 |
+| `--task X --fit_result PATH` | 读取指定的配对结果并执行同一套名称与物理语义检查。选择结果不改变任务。 |
+| `--trajectory_file PATH` | 可选的回放轨迹。省略时沿用现有扫频命令。文件模式的关节列按任务顺序，时间按任务 strict 或显式 legacy_index 规则解释。仅在回放模式接受，与显式扫频参数互斥。 |
+| `--output PATH`、`--plot` | 前者仅在回放时使用，按需原子保存已完成的响应，输出不可指向受保护的输入或常规采集文件。后者沿用现有绘图开关。 |
+
+**参数数据。** 在 CPU 读取的配对结果含 `leg_order`、`wheel_order`、一维有限物理参数 `params[P]` 和一一对应的 `parameter_names[P]`。以两个任务分组核对名称，再按种类与关节名恢复 armature、damping、friction（每个受控关节各一项，非负），encoder_bias（每条腿关节一项，rad，轮补零）及一个共享 delay。应用整数 `delay_steps`，须等于连续候选值向下取整，且 `delay_seconds` 与步数乘时步一致并满足执行器延迟容量。Newton 写单一干摩擦；PhysX 可选的完整 friction_ratio 块限于 [0,1]，有比例时动摩擦取静摩擦乘比例，无比例时取静摩擦。报告不一致的字段、关节组或参数名。
+
+**轨迹与测量。** T 为样本数，L、W 分别为腿和轮关节数。文件包含 `time[T]`、`dof_pos[T,L]`、`des_dof_pos[T,L]`；W>0 时另含 `dof_vel[T,W]`、`des_dof_vel[T,W]`。沿用现有参考加载器的有限性、列宽和时钟校验。回放输出采用同样字段，time 为以秒计的相对步前时刻，位置为测量坐标的 rad，轮速为 rad/s。拟合结果参数的按名重排只作用于具名结果，验证文件列仍遵循任务声明。模型腿位置按 q−bias 记录一次，输出 des 字段取延迟前命令。
+
+**指标。** 对每个存在的响应组计算 `sqrt(mean((replay - measured)^2))`，平均覆盖时间和该组全部关节。仅命令输入时没有实测预测误差。图例区分期望、实测、模型响应；同轨迹复现另行比较 `best_result.pt` 中成对保存的模拟响应。
+
+**播放行为。** Q7 的两项容差仅由短程复现验收测试使用。对于有效输入，误差超限时 CLI 仍完整播放，按请求绘图、保存并正常退出。有实测轨迹时照常报告预测 RMSE。

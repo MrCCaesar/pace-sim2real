@@ -231,3 +231,43 @@ Plan complete. Initial implementation frontier: #10 and #11; #12 waits for #11, 
 CR2 Implement clarification (user approved, 2026-11-17): the published T3 draft's Newton rejection requirement above is superseded. Newton configuration must warn, disable separate dynamic friction identification and remove its ratio bounds before optimizer creation. No tracker body edits were made; user-approved decisions take precedence. Both review findings are resolved: this clarification plus complete, unique actuator coverage preflight.
 
 Post-implementation user amendment executed within existing files: config-owned action transforms; typed name/column mapping and pure reordering; prepacked commands; contiguous device buffers and one completed-data transfer; actual second timestamps clarified. Added regression at existing collector seam and bounded benchmark against a disclosed runnable ecefbfe loop adapter. No new ticket/file split or tracker writes; see verification.md for performance scope and results.
+
+## CR3 — 拟合结果回放 · Plan / Approved and published
+
+父 Issue 为 #4。任务依据是 CR3-R1–R4、Specify Q4–Q7 与验收 A1–A5。以下三个工单各自交付一个可从采集入口演示的行为，并随工单补充使用示例与对应测试。
+
+### T1 · 用指定拟合结果回放扫频
+
+前置：无。操作者可显式选择一份当前格式的最佳拟合结果，用已有扫频命令观察模型响应。
+
+- [ ] 只传任务名继续固定参数采集。显式结果回放以单一 dt、分组关节名及命名参数为准；覆盖组内重排、缺失、多余、重复、跨组、旧双时步和物理设置冲突的情况。
+- [ ] 用可区分的逐关节值检查惯量、阻尼、摩擦、腿偏置、轮零偏置及共享整数延迟。覆盖纯腿与混合任务、Newton 单一干摩擦和 PhysX 有／无动摩擦比例的情形。回放使用指定候选与扫频初态。
+- [ ] 可以绘制期望和模型响应，报告参数与轨迹来源。回放默认不写数据；显式另存时保存命令、步前采样时间和模型响应，保护拟合输入与常规采集文件。播放与保存允许任意有限的跟踪误差。
+- [ ] 给出显式回放和固定参数采集示例，以小规模受控输入检查现有采集与回放两条入口。对应 A1、A2、A5。
+
+### T2 · 自动回放任务的最新拟合运行
+
+前置：T1。操作者可以省略结果路径，直接播放当前任务最新运行，并能定位缺少结果的运行。
+
+- [ ] 在当前任务日志根按拟合运行名中的启动时间选最新目录，排除录像等目录；自动选择与显式指定同一结果时，应用的候选和回放行为一致。
+- [ ] 用“较早完整、较新未完成、另有录像目录”的组合验收；最新运行缺少最佳结果时报告所选路径并停止。覆盖没有拟合运行以及裸回放选项紧跟 Hydra 预设的情形。
+- [ ] 文档示例并列展示无回放选项、无路径回放及显式路径三种用法。对应 A1、A5。
+
+### T3 · 用采集轨迹验证预测响应
+
+前置：T1。可显式选取最佳结果，再用任一符合契约的采集文件驱动回放。此路径足以完成本工单所有验收，故不依赖 T2。
+
+- [ ] 按任务声明读取文件的分组、列和时间；覆盖显式扫频参数与文件互斥、首帧腿实测偏离期望、非零初始轮速，以及延迟历史复位。
+- [ ] 用独立实测轨迹核对步前命令与响应。终端报告可手算核对的腿位置预测 RMSE（rad）和轮速度预测 RMSE（rad/s，仅有轮时）；绘图叠加期望、实测及模型响应。另存回放不能覆盖轨迹输入。
+- [ ] 在相同配置、初态和命令下做短程复现，逐关节与最佳候选保存的模拟响应对照。软件验收采用全样本最大绝对差，腿位置 ≤ 0.0001 rad，轮速度 ≤ 0.001 rad/s。另用误差超限的有效输入验证正常回放、绘图、显式保存与正常退出。
+- [ ] 使用说明分别展示同轨迹复现和独立轨迹预测，标注误差单位与阈值用途。对应 A3、A4、A5。
+
+### 审批与交接
+
+用户回复“批准”后，三个工单已发布为 #4 的子 Issue。已从 GitHub 核对正文、打开状态、ready-for-agent 标签、父 Issue 及原生阻塞关系。
+
+- [#14 用指定拟合结果回放扫频](https://github.com/MrCCaesar/pace-sim2real/issues/14) 无前置依赖。
+- [#15 自动回放任务的最新拟合运行](https://github.com/MrCCaesar/pace-sim2real/issues/15) 依赖 #14。
+- [#16 用采集轨迹验证预测响应](https://github.com/MrCCaesar/pace-sim2real/issues/16) 依赖 #14。
+
+进入 Implement 需另行批准，从 #14 开始。正式 Verify 按 A1–A5 汇总证据，分别记录同轨迹复现和独立轨迹验证的输入、运行条件与分组误差。Isaac Lab 的运行依仓库资源约束顺序执行。

@@ -148,3 +148,28 @@ Fitting prepares commands once, keeps timestamp checks on CPU and reuses device 
 Isaac Lab collection writes `data/<task-name>/chirp_data.pt`; fitting reads `data/<task-name>/<data_dir>`, with task configs defaulting `data_dir` to `chirp_data.pt`. Namespace prefixes are removed from task names. Existing files are not moved automatically. Fitting defaults to `--device cuda` and no visualizer; use `--device cpu` or `--visualizer newton_gl` to override. These defaults do not change the selected physics preset.
 
 Plotting validates schema-v2 candidate metadata, joint groups, time, measured/desired/fitted tensor shapes and finite values, then recomputes stored errors. Invalid records produce a diagnostic instead of a late plotting failure. `--plot_score` requires a run containing `progress.pt`, generated with `cmaes.save_optimization_process=True`. `--mean_name` remains parameter-only diagnostics and cannot be combined with `--result_name` or `--plot_trajectory`; no bias is subtracted again from saved fitted positions.
+
+
+## Replay a fitted candidate in Isaac Lab
+
+Run these commands from the same working directory used for fitting. Set the task once:
+
+```bash
+task=Isaac-Pace-Sevnce-X5-v0
+uv run python scripts/pace/data_collection.py --task "$task"                         # fixed-parameter collection
+uv run python scripts/pace/data_collection.py --task "$task" --fit_result --plot     # latest fit, generated chirp
+uv run python scripts/pace/data_collection.py --task "$task" --fit_result runs/x5/best_result.pt --duration 5 --max_frequency 4 --plot
+```
+
+The bare `--fit_result` selects the newest timestamped fitting run under `logs/pace-sim2real/<task>/`. If that run has no `best_result.pt`, the error identifies the run. An explicit result path selects that candidate directly. Replay requires a paired v2 result with a single `settings.dt`, compatible physics, and matching leg and wheel names. Within each group the fitted parameters are reordered by name.
+
+Use a separately collected trajectory to evaluate prediction on different commands:
+
+```bash
+uv run python scripts/pace/data_collection.py --task "$task" --fit_result \
+    --trajectory_file validation/x5_chirp.pt --output validation/x5_replay.pt --plot
+```
+
+The trajectory uses the task's declared leg and wheel column order and sampling interval. Supply either a trajectory file or explicit chirp settings. With a file, the simulation starts from its first measured leg positions and wheel speeds. The terminal reports position prediction RMSE in rad and wheel-speed prediction RMSE in rad/s for tasks with wheels. Each metric compares the new response to the supplied measurements. The plot adds the commanded trajectory for context.
+
+Replay writes a three- or five-tensor response only when you give `--output`. To check reproduction, use the original fit trajectory and compare the output with the winning candidate's saved simulation response. The short reproduction test uses maximum absolute differences of 0.0001 rad and 0.001 rad/s. Playback, plotting, and saving remain available at any finite tracking error.
