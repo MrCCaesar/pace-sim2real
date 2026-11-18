@@ -145,6 +145,12 @@ def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path
     assert torch.load(result_path, weights_only=True)["generation"] == 0
 
     events = EventAccumulator(str(opt.log_dir), size_guidance={"histograms": 0}).Reload()
+    means = events.Scalars("1_Armature/mean_wheel")
+    assert [entry.step for entry in means] == [0, 1]
+    saved_mean = torch.load(opt.log_dir / "mean_000.pt", weights_only=True)
+    assert means[0].value == saved_mean[1].item()
+    assert means[1].value == opt._params_to_sim_params(torch.as_tensor(opt.optimizer.mean))[1].item()
+    assert events.Scalars("0_Delay/mean")[1].value == 2.5
     best = events.Scalars("1_Armature/best_wheel")
     assert [entry.step for entry in best] == [0, 1]
     assert best[1].value == pytest.approx(armature[1, 1].item())
@@ -160,6 +166,40 @@ def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path
     if separate_friction:
         assert events.Scalars("6_Dynamic_Friction_Ratio/best_wheel")[1].value == 0.25
         assert events.Scalars("6_Dynamic_Friction/best_wheel")[1].value == pytest.approx(0.2)
+
+
+def test_joint_scales_normalize_each_column_and_roundtrip_through_plotting(tmp_path):
+    optimizer = load_module("pace_joint_scale_optimizer", "src/pace_sim2real/optim/cma_es.py")
+    plotter = load_module("pace_joint_scale_plot", "scripts/pace/plot_trajectory.py")
+    data = {"time": torch.tensor([0.0, 0.01], dtype=torch.float64)}
+    for key in ("dof_pos", "des_dof_pos", "dof_vel", "des_dof_vel"):
+        data[key] = torch.zeros(2, 2)
+    args = (torch.zeros(15, 2), 2, str(tmp_path), ["a", "b", "c", "d"], 1, data, "cpu")
+    groups = dict(leg_order=["a", "b"], wheel_order=["c", "d"], reference_settings={"dt": 0.01})
+    for key, scale in [
+        ("position_error_scale", [1.0]),
+        ("velocity_error_scale", [1.0, 1.0, 1.0]),
+        ("position_error_scale", [1.0, float("nan")]),
+        ("velocity_error_scale", [0.0, 2.0]),
+    ]:
+        with pytest.raises(ValueError, match=key):
+            optimizer.CMAESOptimizer(*args, **groups, **{key: scale})
+
+    opt = optimizer.CMAESOptimizer(
+        *args, **groups, position_error_scale=[2.0, 8.0], velocity_error_scale=[3.0, 4.0], position_weight=2.0
+    )
+    q = torch.tensor([[2.0, 4.0], [3.0, 5.0]])
+    v = torch.tensor([[6.0, 8.0], [7.0, 9.0]])
+    try:
+        for _ in range(2):
+            opt.tell(q, torch.zeros_like(q), sim_dof_vel=v, real_dof_vel=torch.zeros_like(v))
+        opt.evolve()
+    finally:
+        opt.close()
+    result = plotter.load_result(opt.log_dir / "best_result.pt")
+    assert result["score"] == pytest.approx((2 * 0.625 + 4) / 3)
+    assert result["position_rmse"] == pytest.approx(10**0.5)
+    assert result["velocity_rmse"] == pytest.approx(50**0.5)
 
 
 def run_backend_contract(backend, optimization, output, decimation=1):

@@ -160,8 +160,8 @@ class TerminationsCfg:
 class CMAESOptimizerCfg:
     """CMA-ES optimizer configuration."""
 
-    position_error_scale: float = 1.0
-    velocity_error_scale: float = 1.0
+    position_error_scale: float | list[float] = 1.0
+    velocity_error_scale: float | list[float] = 1.0
     position_weight: float = 1.0
     velocity_weight: float = 1.0
     max_iteration: int = 200

@@ -19,6 +19,15 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 
+def _error_scale(value: float | list[float], width: int, name: str, device: torch.device) -> torch.Tensor:
+    if isinstance(value, list) and len(value) != width:
+        raise ValueError(f"{name} requires {width} joint scales, got {len(value)}")
+    values = value if isinstance(value, list) else [value]
+    if any(type(x) not in (int, float) or not math.isfinite(x) or x <= 0 for x in values):
+        raise ValueError(f"{name} must contain finite positive scales")
+    return torch.tensor(value, dtype=torch.float64, device=device)
+
+
 class CMAESOptimizer:
     def __init__(
         self,
@@ -62,10 +71,15 @@ class CMAESOptimizer:
         self.save_interval = save_interval
         self.save_optimization_process = save_optimization_process
         self.separate_dynamic_friction = separate_dynamic_friction
-        self.scales = (position_error_scale, velocity_error_scale)
+        self.position_scale = _error_scale(
+            position_error_scale, len(self.leg_order), "position_error_scale", self.device
+        )
+        self.velocity_scale = _error_scale(
+            velocity_error_scale, len(self.wheel_order), "velocity_error_scale", self.device
+        )
         self.weights = (position_weight, velocity_weight)
-        if any(not math.isfinite(x) or x <= 0 for x in (*self.scales, *self.weights)):
-            raise ValueError("Error scales and weights must be finite and positive")
+        if any(not math.isfinite(x) or x <= 0 for x in self.weights):
+            raise ValueError("Group weights must be finite and positive")
         num_joints, num_legs = len(self.joint_order), len(self.leg_order)
         self.armature_idx, self.damping_idx, self.friction_idx = (
             slice(0, num_joints),
@@ -139,7 +153,7 @@ class CMAESOptimizer:
         self.sim_dof_vel_buffer = torch.empty(
             (population_size, self.num_samples, len(self.wheel_order)), device=self.device
         )
-        self.squared_errors = torch.zeros((population_size, 2), device=self.device, dtype=torch.float64)
+        self.squared_errors = torch.zeros((population_size, num_joints), device=self.device, dtype=torch.float64)
         self.scores = torch.zeros(population_size, device=self.device, dtype=torch.float64)
         self._reset_population()
         config = dict(schema_version=2, leg_order=self.leg_order, wheel_order=self.wheel_order)
@@ -194,23 +208,28 @@ class CMAESOptimizer:
         measured_q = real_dof_pos if batched else real_dof_pos.unsqueeze(1)
         q = q - self.sim_params[:, None, self.bias_idx]
         self.sim_dof_pos_buffer[:, samples] = q
-        self.squared_errors[:, 0] += (q.double() - measured_q.double()).square().mean(dim=2).sum(dim=1)
+        self.squared_errors[:, :num_legs] += (q.double() - measured_q.double()).square().sum(dim=1)
         if num_wheels:
             assert sim_dof_vel is not None and real_dof_vel is not None
             v = sim_dof_vel if batched else sim_dof_vel.unsqueeze(1)
             measured_v = real_dof_vel if batched else real_dof_vel.unsqueeze(1)
             self.sim_dof_vel_buffer[:, samples] = v
-            self.squared_errors[:, 1] += (v.double() - measured_v.double()).square().mean(dim=2).sum(dim=1)
+            self.squared_errors[:, num_legs:] += (v.double() - measured_v.double()).square().sum(dim=1)
         self.scores_counter += count
 
     def evolve(self):
         if self.scores_counter != self.num_samples:
             raise ValueError("Only a complete rollout can evolve or become best")
-        means = self.squared_errors / self.num_samples
-        score = means[:, 0] * self.weights[0] / self.scales[0] ** 2
+        joint_mse = self.squared_errors / self.num_samples
+        position_mse = joint_mse[:, : len(self.leg_order)]
+        means = joint_mse.new_zeros((self.population_size, 2))
+        means[:, 0] = position_mse.mean(dim=1)
+        score = (position_mse / self.position_scale.square()).mean(dim=1) * self.weights[0]
         weight = self.weights[0]
         if self.wheel_order:
-            score += means[:, 1] * self.weights[1] / self.scales[1] ** 2
+            velocity_mse = joint_mse[:, len(self.leg_order) :]
+            means[:, 1] = velocity_mse.mean(dim=1)
+            score += (velocity_mse / self.velocity_scale.square()).mean(dim=1) * self.weights[1]
             weight += self.weights[1]
         self.scores = score / weight
         if not torch.isfinite(self.scores).all():
@@ -230,6 +249,12 @@ class CMAESOptimizer:
         host_params = self.sim_params.detach().cpu()
         if self.save_optimization_process:
             self.sim_params_buffer.append(host_params)
+        if self.optimizer is not None:
+            self.optimizer.tell(list(zip(self.params.cpu().numpy(), host_scores.tolist(), strict=True)))
+            normalized_mean = torch.as_tensor(self.optimizer.mean, device=self.device)
+            physical_mean = self._params_to_sim_params(normalized_mean).cpu()
+        else:
+            physical_mean = host_params[0]
         generation = self.iteration_counter
         groups = [
             ("1_Armature", self.armature_idx, self.joint_order),
@@ -243,13 +268,17 @@ class CMAESOptimizer:
             for name, value in zip(self.joint_order, dynamic_friction, strict=True):
                 self.writer.add_scalar(f"6_Dynamic_Friction/best_{name}", value, generation)
         for group, columns, names in groups:
-            for name, values in zip(names, host_params[:, columns].unbind(dim=1), strict=True):
+            for name, values, mean in zip(
+                names, host_params[:, columns].unbind(dim=1), physical_mean[columns], strict=True
+            ):
+                self.writer.add_scalar(f"{group}/mean_{name}", mean, generation)
                 self.writer.add_histogram(f"{group}/distribution_{name}", values, generation)
                 self.writer.add_scalar(f"{group}/best_{name}", values[index], generation)
 
         delay = host_params[:, self.delay_idx]
         self.writer.add_histogram("0_Delay/distribution", delay, generation)
         self.writer.add_scalar("0_Delay/best", delay[index], generation)
+        self.writer.add_scalar("0_Delay/mean", physical_mean[self.delay_idx], generation)
         self.writer.add_scalar("0_Episode/score", best_score, generation)
         self.writer.add_scalar("0_Episode/max_score", host_scores.max(), generation)
         self.writer.add_scalar("0_Episode/diff_score", self._relative_spread, generation)
@@ -259,18 +288,8 @@ class CMAESOptimizer:
             self.writer.add_scalar(
                 "error/velocity_rmse_rad_s", host_means[index, 1].sqrt().item(), self.iteration_counter
             )
-        if self.optimizer is not None:
-            parameters = self.params.cpu().numpy()
-            self.optimizer.tell(list(zip(parameters, host_scores.tolist(), strict=True)))
-        if self.save_interval > 0 and self.iteration_counter % self.save_interval == 0:
-            mean = (
-                torch.as_tensor(self.optimizer._mean, device=self.device)
-                if self.optimizer is not None
-                else torch.empty(0, device=self.device)
-            )
-            self._atomic_save(
-                self._params_to_sim_params(mean).cpu(), self.log_dir / f"mean_{self.iteration_counter:03d}.pt"
-            )
+        if self.save_interval > 0 and generation % self.save_interval == 0:
+            self._atomic_save(physical_mean, self.log_dir / f"mean_{generation:03d}.pt")
         print(
             f"Generation {self.iteration_counter}: best score={best_score:.6g}; position"
             f" RMSE={host_means[index, 0].sqrt().item():.6g} rad; velocity"

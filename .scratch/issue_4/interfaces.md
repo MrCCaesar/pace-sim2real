@@ -246,3 +246,7 @@ Existing `load_result(path: str|Path)->dict` now validates every field consumed 
 ### Fitting timestep and result settings
 
 The user's fitting-settings follow-up supersedes the two timestep fields above. Fitting requires `env_cfg.decimation == 1` and a finite positive `env_cfg.sim.dt` (seconds). Reference validation, rollout timing and conversion of applied delay steps to seconds use this interval. Collection retains its control interval. Each saved artifact carries the canonical leg and wheel orders at its top level. Optional reference order declarations are checked at load time. Settings contain `dt`, the resolved backend config class name and a compact solver identifier (Newton solver config class or PhysX solver type).
+
+### Joint-specific fit scales and CMA distribution means
+
+Each error scale accepts a float or list of floats, strictly positive and finite. Lists follow the corresponding leg or wheel order with exact group length, including zero for an empty wheel group. Group scores average joint MSE divided by squared joint scale. Saved raw RMSE uses physical units. The fitter and plotter use the same objective for scalar and list configurations. Every generation records the post-update CMA parameter mean in physical units to TensorBoard, using the generation index shared with the histogram and best-candidate tags.

@@ -46,14 +46,19 @@ def result_errors(result: dict[str, Any]) -> dict[str, float | None]:
         shape = (len(result["time"]), len(names))
         _validate_tensor(measured, shape, field)
         _validate_tensor(simulated, shape, "sim_" + field)
-        mean = (simulated.double() - measured.double()).square().mean().item()
+        joint_mse = (simulated.double() - measured.double()).square().mean(dim=0)
         scale, group_weight = settings[group + "_error_scale"], settings[group + "_weight"]
-        if any(not isinstance(x, (int, float)) or not math.isfinite(x) or x <= 0 for x in (scale, group_weight)):
+        if isinstance(scale, list) and len(scale) != len(names):
+            raise ValueError(f"Stored {group} error scale requires {len(names)} values")
+        values = scale if isinstance(scale, list) else [scale]
+        if any(type(x) not in (int, float) or not math.isfinite(x) or x <= 0 for x in (*values, group_weight)):
             raise ValueError(f"Invalid stored {group} error normalization")
+        mean = joint_mse.mean().item()
         if not math.isfinite(mean):
             raise ValueError(f"Nonfinite {group} error")
         errors[group + "_rmse"] = math.sqrt(mean)
-        objective += group_weight * mean / scale**2
+        scales = torch.as_tensor(scale, dtype=joint_mse.dtype, device=joint_mse.device)
+        objective += group_weight * (joint_mse / scales.square()).mean().item()
         weight += group_weight
     if not weight or not math.isfinite(objective / weight):
         raise ValueError("Result has no valid response objective")
