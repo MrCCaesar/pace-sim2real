@@ -2,6 +2,8 @@
 
 Current stage: CR3 Verify 已完成 — 提交 d8e0480 的 A1–A5 及 Q7 软件验收通过。隔离源码全量测试 126 项通过，实际乱序参数回放、独立扫频、超限播放与绘图数据已复核。证据、命令及 PhysX 复算范围见 verification.md 的 CR3 Verify。
 
+交付记录：根 README 已改为中文，列出 Isaac Lab 3.0 依赖、两种采集方式、拟合、回放及诊断配置。文档验证覆盖四个入口的命令行帮助、两个任务的配置解析及原生 MuJoCo 的 20 帧采集。本次交付对应回放子任务 #14、#15、#16；软件验收记录见 verification.md。
+
 Previous stage: User-requested post-release plotting refactor / Implement complete, committed locally. Current task-directory selection, compatible legacy selectors, complete paired-record diagnostics and separated plotting responsibilities implemented. 102 tests passed, Pyright0; existing real pure-leg and Newton/PhysX mixed results read/plotted without simulations. Prior release/Issue closure history remains unchanged; no new push or tracker operation.
 
 ## Delivery
