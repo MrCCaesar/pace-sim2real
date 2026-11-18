@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -80,6 +81,8 @@ def _check_paired_response(record, legs, wheels):
     reference, time = record.get("reference"), record.get("time")
     if not isinstance(reference, dict) or not isinstance(time, torch.Tensor) or time.ndim != 1 or len(time) < 2:
         raise ValueError("Fit result is missing its paired reference trajectory")
+    if not time.is_floating_point() or not torch.isfinite(time).all() or not (time.diff() > 0).all():
+        raise ValueError("Invalid fit time: expected finite increasing sample times")
     for field, group in (("leg_order", legs), ("wheel_order", wheels)):
         names = record.get(field)
         if not isinstance(names, (list, tuple)) or not all(isinstance(n, str) for n in names):
@@ -91,8 +94,13 @@ def _check_paired_response(record, legs, wheels):
         if group:
             for key, source in ((response, reference), ("des_" + response, reference), ("sim_" + response, record)):
                 tensor = source.get(key)
-                if not isinstance(tensor, torch.Tensor) or tensor.shape != (len(time), len(group)):
-                    raise ValueError(f"Fit result is missing the paired {key} trajectory for {field}")
+                if (
+                    not isinstance(tensor, torch.Tensor)
+                    or tensor.shape != (len(time), len(group))
+                    or not tensor.is_floating_point()
+                    or not torch.isfinite(tensor).all()
+                ):
+                    raise ValueError(f"Invalid or missing paired {key} trajectory for {field}")
 
 
 def _named_parameters(record, legs, wheels) -> JointParameters:
@@ -106,8 +114,12 @@ def _named_parameters(record, legs, wheels) -> JointParameters:
     ):
         raise ValueError("Invalid named parameter vector in fit result")
     values = values.float()
-    if not torch.isfinite(values).all() or len(set(names)) != len(names):
-        raise ValueError("Nonfinite or duplicate named parameter in fit result")
+    duplicates = [name for name, count in Counter(names).items() if count > 1]
+    if duplicates:
+        raise ValueError(f"Fit result contains duplicate parameters: {duplicates}")
+    nonfinite = [names[i] for i in (~torch.isfinite(values)).nonzero().flatten().tolist()]
+    if nonfinite:
+        raise ValueError(f"Nonfinite fit parameters: {nonfinite}")
     indices = {name: i for i, name in enumerate(names)}
     joints = (*legs, *wheels)
     kinds = ["armature", "damping", "friction"]
@@ -128,13 +140,16 @@ def _named_parameters(record, legs, wheels) -> JointParameters:
         return values[[indices[f"{kind}:{name}"] for name in group]]
 
     armature, damping, friction = (block(kind, joints) for kind in kinds[:3])
-    if any((p < 0).any() for p in (armature, damping, friction)):
-        raise ValueError("Mechanical replay parameters must be nonnegative")
+    for kind, data in (("armature", armature), ("damping", damping), ("friction", friction)):
+        invalid = [f"{kind}:{joints[i]}" for i in (data < 0).nonzero().flatten().tolist()]
+        if invalid:
+            raise ValueError(f"Expected nonnegative mechanical parameters: {invalid}")
     dynamic = friction
     if has_ratio:
         ratio = block("friction_ratio", joints)
-        if ((ratio < 0) | (ratio > 1)).any():
-            raise ValueError("Dynamic friction ratios must be in [0, 1]")
+        invalid = [joints[i] for i in ((ratio < 0) | (ratio > 1)).nonzero().flatten().tolist()]
+        if invalid:
+            raise ValueError(f"Expected friction_ratio in [0, 1] for {invalid}")
         dynamic = friction * ratio
     bias = torch.cat((block("encoder_bias", legs), values.new_zeros(len(wheels))))
     delay = values[indices["delay"]].item()

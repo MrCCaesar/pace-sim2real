@@ -91,7 +91,8 @@ def main(argv: list[str] | None = None):
     if replay:
         result_path = Path(args_cli.fit_result) if args_cli.fit_result else latest_fit_result(Path(log_dir))
         output = args_cli.output
-        protected = [result_path, default_output]
+        fit_reference = default_output.parent / env_cfg.sim2real.data_dir
+        protected = [result_path, default_output, fit_reference]
         if args_cli.trajectory_file is not None:
             protected.append(args_cli.trajectory_file)
             reference = load_reference_data(args_cli.trajectory_file, env_cfg.sim2real, env_cfg.sim.dt)

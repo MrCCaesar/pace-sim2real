@@ -1,10 +1,24 @@
 """Exercise the fitted-parameter file contract independently of simulator startup."""
 
+import importlib
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def replay_contract(monkeypatch):
+    # Load the CPU-only file contract without registering simulation tasks in the pytest process.
+    monkeypatch.syspath_prepend(str(ROOT / "src" / "pace_sim2real" / "utils"))
+    return importlib.import_module("fit_replay")
 
 
 def fit_file(tmp_path, backend="NewtonCfg", ratio=None, wheels=("w",)):
@@ -49,11 +63,9 @@ def fit_file(tmp_path, backend="NewtonCfg", ratio=None, wheels=("w",)):
     return path, cfg, record
 
 
-def test_replay_reads_named_parameters_in_task_order(tmp_path):
-    from pace_sim2real.utils.fit_replay import load_replay_parameters
-
+def test_replay_reads_named_parameters_in_task_order(tmp_path, replay_contract):
     path, cfg, _ = fit_file(tmp_path)
-    params = load_replay_parameters(path, cfg, ("a", "b"), ("w",))
+    params = replay_contract.load_replay_parameters(path, cfg, ("a", "b"), ("w",))
     torch.testing.assert_close(params.armature, torch.tensor([2.0, 1.0, 3.0]))
     torch.testing.assert_close(params.damping, torch.tensor([3.0, 2.0, 4.0]))
     torch.testing.assert_close(params.friction, torch.tensor([4.0, 3.0, 5.0]))
@@ -62,11 +74,9 @@ def test_replay_reads_named_parameters_in_task_order(tmp_path):
 
 
 @pytest.mark.parametrize("ratio, expected", [(None, [4.0, 3.0]), (0.25, [1.0, 0.75])])
-def test_physx_friction_and_leg_only_replay(tmp_path, ratio, expected):
-    from pace_sim2real.utils.fit_replay import load_replay_parameters
-
+def test_physx_friction_and_leg_only_replay(tmp_path, ratio, expected, replay_contract):
     path, cfg, _ = fit_file(tmp_path, backend="PhysxCfg", ratio=ratio, wheels=())
-    params = load_replay_parameters(path, cfg, ("a", "b"), ())
+    params = replay_contract.load_replay_parameters(path, cfg, ("a", "b"), ())
     torch.testing.assert_close(params.dynamic_friction, torch.tensor(expected))
 
 
@@ -86,11 +96,11 @@ def test_physx_friction_and_leg_only_replay(tmp_path, ratio, expected):
         ("delay", "delay"),
         ("partial", "Missing parameters"),
         ("unpaired", "sim_dof_pos"),
+        ("invalid_training_response", "sim_dof_pos"),
+        ("invalid_clock", "time"),
     ],
 )
-def test_incompatible_result_identifies_the_problem(tmp_path, change, match):
-    from pace_sim2real.utils.fit_replay import load_replay_parameters
-
+def test_incompatible_result_identifies_the_problem(tmp_path, change, match, replay_contract):
     path, cfg, record = fit_file(tmp_path)
     if change == "old_dt":
         dt = record["settings"].pop("dt")
@@ -103,6 +113,10 @@ def test_incompatible_result_identifies_the_problem(tmp_path, change, match):
         record[change][0] = "w" if change == "leg_order" else "unknown"
     elif change == "duplicate":
         record["parameter_names"][0] = record["parameter_names"][1]
+    elif change == "invalid_training_response":
+        record["sim_dof_pos"][0, 0] = torch.nan
+    elif change == "invalid_clock":
+        record["time"].zero_()
     elif change == "unpaired":
         record.pop("sim_dof_pos")
     elif change == "negative":
@@ -113,31 +127,27 @@ def test_incompatible_result_identifies_the_problem(tmp_path, change, match):
         record["parameter_names"][-1] = "unexpected"
     torch.save(record, path)
     with pytest.raises(ValueError, match=match):
-        load_replay_parameters(path, cfg, ("a", "b"), ("w",))
+        replay_contract.load_replay_parameters(path, cfg, ("a", "b"), ("w",))
 
 
-def test_latest_run_is_selected_before_checking_for_the_result(tmp_path):
-    from pace_sim2real.utils.fit_replay import latest_fit_result
-
+def test_latest_run_is_selected_before_checking_for_the_result(tmp_path, replay_contract):
     old = tmp_path / "26_11_01_12-00-00-000000"
     recent = tmp_path / "26_11_02_12-00-00-000000"
     (tmp_path / "videos").mkdir()
     with pytest.raises(FileNotFoundError, match="No fitting run"):
-        latest_fit_result(tmp_path)
+        replay_contract.latest_fit_result(tmp_path)
     old.mkdir()
     (old / "best_result.pt").touch()
     recent.mkdir()
     with pytest.raises(FileNotFoundError, match=recent.name):
-        latest_fit_result(tmp_path)
+        replay_contract.latest_fit_result(tmp_path)
     result = recent / "best_result.pt"
     result.touch()
     old.touch()
-    assert latest_fit_result(tmp_path) == result
+    assert replay_contract.latest_fit_result(tmp_path) == result
 
 
-def test_prediction_error_uses_measurements_and_physical_units():
-    from pace_sim2real.utils.fit_replay import prediction_rmse
-
+def test_prediction_error_uses_measurements_and_physical_units(replay_contract):
     replay = {"dof_pos": torch.tensor([[0.0, 0.0], [0.0, 4.0]]), "dof_vel": torch.tensor([[6.0], [6.0]])}
     reference = {
         "dof_pos": torch.zeros(2, 2),
@@ -145,26 +155,28 @@ def test_prediction_error_uses_measurements_and_physical_units():
         "des_dof_pos": replay["dof_pos"],
         "des_dof_vel": replay["dof_vel"],
     }
-    assert prediction_rmse(replay, reference) == {"dof_pos": 2.0, "dof_vel": 5.0}
-    assert prediction_rmse({"dof_pos": replay["dof_pos"]}, reference) == {"dof_pos": 2.0}
+    assert replay_contract.prediction_rmse(replay, reference) == {"dof_pos": 2.0, "dof_vel": 5.0}
+    assert replay_contract.prediction_rmse({"dof_pos": replay["dof_pos"]}, reference) == {"dof_pos": 2.0}
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("PACE_RUN_REPLAY_INTEGRATION") != "1", reason="Opt in to the multi-launch X5 replay check"
+)
 def test_x5_short_fit_replays_its_response_and_checks_an_independent_chirp(tmp_path):
     """Exercise fixed collection, fitting, and both replay entry points in isolated task directories."""
-    import os
-    import subprocess
-    import sys
-    from pathlib import Path
+    import psutil
 
-    if not torch.cuda.is_available() or torch.cuda.mem_get_info()[0] < 4 * 1024**3:
-        pytest.skip("X5 Newton integration requires an available CUDA device")
-    scripts = Path(__file__).resolve().parents[1] / "scripts" / "pace"
+    if not torch.cuda.is_available():
+        pytest.skip("X5 Newton integration requires CUDA")
+    scripts = ROOT / "scripts" / "pace"
     task = "Isaac-Pace-Sevnce-X5-v0"
     data_path = tmp_path / "data" / task / "chirp_data.pt"
     env = dict(os.environ, PACE_ROOT=str(tmp_path), MPLBACKEND="Agg", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2")
 
     def run(script, *args):
+        if min(psutil.virtual_memory().available, torch.cuda.mem_get_info()[0]) < 4 * 1024**3:
+            pytest.skip("Insufficient free RAM or VRAM for bounded X5 replay")
         command = [
             sys.executable,
             str(scripts / script),
@@ -221,20 +233,34 @@ def test_x5_short_fit_replays_its_response_and_checks_an_independent_chirp(tmp_p
         "--plot",
     )
     response = read(replay_file)
-    for field, group, tol in (("dof_pos", "Position", 0.0001), ("dof_vel", "Velocity", 0.001)):
+    for field, group in (("dof_pos", "Position"), ("dof_vel", "Velocity")):
         rmse = (response[field].double() - held_out[field].double()).square().mean().sqrt().item()
         print(f"Independent-trajectory {field} RMSE: {rmse:.8g}")
         assert f"{group} prediction RMSE: {rmse:.8g}" in stdout
-        assert rmse > tol  # The replay still plotted, saved, and exited successfully.
+
+    # Inject an offset only into measurements after initialization. The commands and physical
+    # initial state are identical, so even a perfect fit must now play through a large residual.
+    outliers = tmp_path / "offset-measurements.pt"
+    for field in ("dof_pos", "dof_vel"):
+        held_out[field][1:, 0] = response[field][1:, 0] + 1.0
+    torch.save(held_out, outliers)
+    offset_replay = tmp_path / "offset-response.pt"
+    run(
+        "data_collection.py",
+        "--fit_result",
+        best_file,
+        "--trajectory_file",
+        outliers,
+        "--output",
+        offset_replay,
+        "--plot",
+    )
+    for field in ("dof_pos", "dof_vel"):
+        assert (read(offset_replay)[field][1:, 0] - held_out[field][1:, 0]).abs().max() > 0.5
     assert data_path.read_bytes() == before
 
 
-def test_cli_protects_inputs_before_simulation(tmp_path, monkeypatch):
-    import sys
-
-    monkeypatch.setattr(sys, "argv", [sys.argv[0]])
-    from scripts.pace import data_collection
-
+def test_cli_protects_inputs_before_simulation(tmp_path):
     task = "Isaac-Pace-Sevnce-X5-v0"
     default = tmp_path / "data" / task / "chirp_data.pt"
     default.parent.mkdir(parents=True)
@@ -248,23 +274,24 @@ def test_cli_protects_inputs_before_simulation(tmp_path, monkeypatch):
     result = tmp_path / "best_result.pt"
     result.write_bytes(b"preserve this result")
     default.write_bytes(b"preserve this collection")
-    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
-    for path in (result, trajectory, default):
+    args = [
+        sys.executable,
+        str(ROOT / "scripts" / "pace" / "data_collection.py"),
+        "--task",
+        task,
+        "--fit_result",
+        str(result),
+        "--trajectory_file",
+        str(trajectory),
+    ]
+    env = dict(os.environ, PACE_ROOT=str(tmp_path))
+    configured = default.with_name("training.pt")
+    configured.write_bytes(b"preserve the configured fit reference")
+    args.append("env.sim2real.data_dir=training.pt")
+    for path in (result, trajectory, default, configured):
         before = path.read_bytes()
-        with pytest.raises(ValueError, match="protected"):
-            data_collection.main(
-                [
-                    "--task",
-                    task,
-                    "--fit_result",
-                    str(result),
-                    "--trajectory_file",
-                    str(trajectory),
-                    "--output",
-                    str(path),
-                ]
-            )
+        completed = subprocess.run([*args, "--output", str(path)], env=env, capture_output=True, text=True, timeout=60)
+        assert completed.returncode != 0 and "protected" in completed.stderr
         assert path.read_bytes() == before
-    with pytest.raises(SystemExit) as exc:
-        data_collection.main(["--task", task, "--fit_result", "--trajectory_file", str(trajectory), "--duration", "20"])
-    assert exc.value.code == 2
+    completed = subprocess.run([*args, "--duration", "20"], env=env, capture_output=True, text=True, timeout=60)
+    assert completed.returncode == 2 and "--trajectory_file and --duration" in completed.stderr
