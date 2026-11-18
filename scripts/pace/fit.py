@@ -16,6 +16,7 @@ wp.config.enable_backward = False
 
 import argparse
 import contextlib
+import math
 import os
 import sys
 
@@ -55,6 +56,16 @@ from pace_sim2real.utils.collection_contracts import (
 _SEED = 42
 
 
+def _fit_dt(env_cfg) -> float:
+    """One reference row advances one physics step during fitting."""
+    if env_cfg.decimation != 1:
+        raise ValueError(f"Fitting requires decimation=1, got {env_cfg.decimation}")
+    dt = env_cfg.sim.dt
+    if not math.isfinite(dt) or dt <= 0:
+        raise ValueError("Fitting requires a finite positive dt")
+    return dt
+
+
 def main(argv: list[str] | None = None):
     """Zero actions agent with Isaac Lab environment."""
     # parse configuration
@@ -74,6 +85,7 @@ def main(argv: list[str] | None = None):
     # create environment
     try:
         validate(env_cfg)
+        dt = _fit_dt(env_cfg)
     except (TypeError, ValueError) as exc:
         raise SystemExit(f"Invalid environment configuration: {exc}") from None
     log_dir = os.path.abspath(os.path.join("logs", "pace-sim2real", normalize_task_name(args_cli.task)))
@@ -87,36 +99,27 @@ def main(argv: list[str] | None = None):
         print(f"[INFO]: Gym observation space: {env.observation_space}")
         print(f"[INFO]: Gym action space: {env.action_space}")
 
-        legs, wheels = resolve_joint_groups(env_cfg.sim2real)
         cfg = env_cfg.sim2real
-        data = load_reference_data(
-            project_root() / "data" / normalize_task_name(args_cli.task) / cfg.data_dir, cfg, env.unwrapped.step_dt
-        )
+        data = load_reference_data(project_root() / "data" / normalize_task_name(args_cli.task) / cfg.data_dir, cfg, dt)
+        physics = env_cfg.sim.physics
+        solver = getattr(physics, "solver_cfg", None)
         settings = {
-            key: getattr(cfg, key)
-            for key in (
-                "reference_leg_order",
-                "reference_wheel_order",
-                "reference_bias_model",
-                "reference_delay_mode",
-                "time_mode",
-                "legacy_sample_dt",
-            )
+            "dt": dt,
+            "backend": type(physics).__name__,
+            "solver": type(solver).__name__ if solver is not None else getattr(physics, "solver_type", None),
+            "reference_bias_model": cfg.reference_bias_model,
+            "reference_delay_mode": cfg.reference_delay_mode,
+            "time_mode": cfg.time_mode,
+            "legacy_sample_dt": cfg.legacy_sample_dt,
         }
-        settings.update(
-            physics_dt=env_cfg.sim.dt,
-            control_dt=env.unwrapped.step_dt,
-            backend=type(env_cfg.sim.physics).__name__,
-            solver=repr(env_cfg.sim.physics),
-        )
         opt = CMAESOptimizer(
-            cfg.bounds_params,
-            env.unwrapped.num_envs,
-            log_dir,
-            legs + wheels,
-            cfg.cmaes.max_iteration,
-            data,
-            env.unwrapped.device,
+            bounds=cfg.bounds_params,
+            population_size=env.unwrapped.num_envs,
+            log_dir=log_dir,
+            joint_order=legs + wheels,
+            max_iteration=cfg.cmaes.max_iteration,
+            data=data,
+            device=env.unwrapped.device,
             epsilon=cfg.cmaes.epsilon,
             sigma=cfg.cmaes.sigma,
             save_interval=cfg.cmaes.save_interval,
@@ -138,6 +141,7 @@ def main(argv: list[str] | None = None):
 def fit_reference(env, data, opt):
     """Replay prepacked commands and score each completed rollout as one batch."""
     base = getattr(env, "unwrapped", env)
+    dt = _fit_dt(base.cfg)
     if base.cfg.sim.use_newton_actuators:
         raise ValueError("Fitting requires Python PACE actuators")
     legs, wheels = resolve_joint_groups(base.cfg.sim2real)
@@ -165,7 +169,7 @@ def fit_reference(env, data, opt):
         for step, timestamp in enumerate(timestamps):
             if not base.sim.is_running():
                 raise RuntimeError("Simulation closed before fitting completed")
-            elapsed = (base._sim_step_counter - origin) * base.physics_dt
+            elapsed = (base._sim_step_counter - origin) * dt
             if abs(elapsed - timestamp) > 1e-7 + 1e-5 * abs(elapsed):
                 raise ValueError("Reference time does not match actual simulation time")
             positions[step].copy_(robot.data.joint_pos.torch)

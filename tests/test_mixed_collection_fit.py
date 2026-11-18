@@ -79,7 +79,10 @@ def test_reference_loader_requires_explicit_legacy_time_and_bias_provenance(tmp_
         module.load_reference_data(path, cfg, 0.01)
 
 
-def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path):
+@pytest.mark.parametrize("separate_friction", [False, True])
+def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path, separate_friction):
+    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
     optimizer = load_module("pace_optimizer_contract_tests", "src/pace_sim2real/optim/cma_es.py")
     data = {
         "time": torch.tensor([0.0, 0.01], dtype=torch.float64),
@@ -89,8 +92,11 @@ def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path
         "des_dof_vel": torch.zeros(2, 1),
     }
     bounds = torch.tensor(
-        [[0.01, 0.1], [0.01, 0.1], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.1, 0.1], [0.0, 0.0]]
+        [[0.01, 0.1], [0.01, 0.1], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.1, 0.1], [2.5, 2.5]]
     )
+    if separate_friction:
+        bounds[4:6] = torch.tensor([[0.4, 0.4], [0.8, 0.8]])
+        bounds = torch.cat((bounds, torch.tensor([[0.5, 0.5], [0.25, 0.25]])))
     opt = optimizer.CMAESOptimizer(
         bounds,
         2,
@@ -102,7 +108,8 @@ def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path
         leg_order=["leg"],
         wheel_order=["wheel"],
         velocity_error_scale=2.0,
-        reference_settings={"physics_dt": 0.01},
+        separate_dynamic_friction=separate_friction,
+        reference_settings={"dt": 0.01},
     )
     for _ in range(2):
         opt.tell(
@@ -114,6 +121,12 @@ def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path
     opt.evolve()
     result_path = next(tmp_path.rglob("best_result.pt"))
     result = torch.load(result_path, weights_only=True)
+    config = torch.load(result_path.parent / "config.pt", weights_only=True)
+    for record in (config, result):
+        assert (record["leg_order"], record["wheel_order"]) == (["leg"], ["wheel"])
+    assert result["settings"]["dt"] == config["dt"] == 0.01
+    assert {"physics_dt", "control_dt", "leg_order", "wheel_order"}.isdisjoint(result["settings"])
+    assert result["delay_steps"] == 2 and result["delay_seconds"] == pytest.approx(0.02)
     assert result["score"] == pytest.approx(1.0)
     assert result["position_rmse"] == pytest.approx(1.0)
     assert result["velocity_rmse"] == pytest.approx(2.0)
@@ -121,14 +134,32 @@ def test_optimizer_scores_both_groups_and_saves_the_evaluated_candidate(tmp_path
     torch.testing.assert_close(opt.get_best_sim_params().cpu(), result["params"])
     for _ in range(2):
         opt.tell(
-            torch.tensor([[3.1], [4.1]]),
+            torch.tensor([[4.1], [3.1]]),
             torch.zeros(2, 1),
-            sim_dof_vel=torch.tensor([[6.0], [8.0]]),
+            sim_dof_vel=torch.tensor([[8.0], [6.0]]),
             real_dof_vel=torch.zeros(2, 1),
         )
+    armature = opt.sim_params[:, opt.armature_idx].clone()
     opt.evolve()
     opt.close()
     assert torch.load(result_path, weights_only=True)["generation"] == 0
+
+    events = EventAccumulator(str(opt.log_dir), size_guidance={"histograms": 0}).Reload()
+    best = events.Scalars("1_Armature/best_wheel")
+    assert [entry.step for entry in best] == [0, 1]
+    assert best[1].value == pytest.approx(armature[1, 1].item())
+    distribution = events.Histograms("1_Armature/distribution_wheel")[1].histogram_value
+    assert distribution.num == 2 and distribution.sum == pytest.approx(armature[:, 1].sum().item())
+    assert "4_Bias/distribution_leg" in events.Tags()["histograms"]
+    assert "4_Bias/distribution_wheel" not in events.Tags()["histograms"]
+    assert events.Scalars("0_Delay/best")[1].value == 2.5
+    assert events.Scalars("0_Episode/score")[1].value == pytest.approx(9.0)
+    assert events.Scalars("0_Episode/max_score")[1].value == pytest.approx(16.0)
+    assert events.Scalars("0_Episode/diff_score")[1].value == pytest.approx(7 / 9)
+    assert ("6_Dynamic_Friction_Ratio/distribution_wheel" in events.Tags()["histograms"]) == separate_friction
+    if separate_friction:
+        assert events.Scalars("6_Dynamic_Friction_Ratio/best_wheel")[1].value == 0.25
+        assert events.Scalars("6_Dynamic_Friction/best_wheel")[1].value == pytest.approx(0.2)
 
 
 def run_backend_contract(backend, optimization, output, decimation=1):
@@ -326,7 +357,7 @@ def run_backend_contract(backend, optimization, output, decimation=1):
                         env.device,
                         leg_order=["leg_joint"],
                         wheel_order=["wheel_joint"],
-                        reference_settings={"physics_dt": cfg.sim.dt, "reference_delay_mode": "command"},
+                        reference_settings={"dt": cfg.sim.dt, "reference_delay_mode": "command"},
                     )
                     try:
                         fitting.fit_reference(env, data, check)
@@ -351,10 +382,8 @@ def run_backend_contract(backend, optimization, output, decimation=1):
                 wheel_order=["wheel_joint"],
                 epsilon=None,
                 reference_settings={
-                    "physics_dt": cfg.sim.dt,
-                    "control_dt": env.step_dt,
+                    "dt": cfg.sim.dt,
                     "reference_delay_mode": "command",
-                    "solver": repr(physics),
                 },
             )
             try:
@@ -473,7 +502,9 @@ def test_legacy_pure_position_reference_and_zero_score_stopping(tmp_path):
     torch.save(data, path)
     loaded = contracts().load_reference_data(path, cfg, 0.01)
     optimizer = load_module("pace_zero_optimizer", "src/pace_sim2real/optim/cma_es.py")
-    opt = optimizer.CMAESOptimizer(torch.zeros(5, 2), 2, str(tmp_path), ["leg"], 3, loaded, "cpu", epsilon=0.01)
+    opt = optimizer.CMAESOptimizer(
+        torch.zeros(5, 2), 2, str(tmp_path), ["leg"], 3, loaded, "cpu", epsilon=0.01, reference_settings={"dt": 0.01}
+    )
     with pytest.raises(RuntimeError):
         opt.get_best_sim_params()
     with pytest.raises(ValueError, match="complete"):
@@ -494,7 +525,9 @@ def test_optimizer_partial_failure_does_not_replace_completed_best(tmp_path):
         "dof_pos": torch.zeros(2, 1),
         "des_dof_pos": torch.zeros(2, 1),
     }
-    opt = optimizer.CMAESOptimizer(torch.zeros(5, 2), 2, str(tmp_path), ["leg"], 3, data, "cpu")
+    opt = optimizer.CMAESOptimizer(
+        torch.zeros(5, 2), 2, str(tmp_path), ["leg"], 3, data, "cpu", reference_settings={"dt": 0.01}
+    )
     for _ in range(2):
         opt.tell(torch.ones(2, 1), torch.zeros(2, 1))
     opt.evolve()
@@ -536,6 +569,7 @@ def test_optimizer_rejects_missing_or_duplicate_drives_before_writes(tmp_path, d
         "cpu",
         leg_order=["leg"],
         wheel_order=["wheel"],
+        reference_settings={"dt": 0.01},
     )
     # No writer methods: reaching a write instead of rejecting the mapping fails this test.
     robot = SimpleNamespace(
@@ -718,6 +752,7 @@ def test_optimizer_accepts_batched_rollouts_with_the_same_group_objective(tmp_pa
         leg_order=["leg"],
         wheel_order=["wheel"],
         velocity_error_scale=2.0,
+        reference_settings={"dt": 0.01},
     )
     q = torch.tensor([[[1.1], [3.1]], [[2.1], [4.1]]])
     v = torch.tensor([[[2.0], [4.0]], [[4.0], [6.0]]])
@@ -751,7 +786,7 @@ from pace_sim2real.optim import CMAESOptimizer
 spec = importlib.util.spec_from_file_location("fit", "scripts/pace/fit.py")
 fit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fit)
-for fault in (None, "transient", "final", "termination", "clock"):
+for fault in (None, "decimation", "transient", "final", "termination", "clock"):
     action_type = type("JointPositionAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
     action = action_type()
     action._joint_names, action.action_dim, action.cfg = ["leg"], 1, NS(asset_name="robot")
@@ -766,7 +801,8 @@ for fault in (None, "transient", "final", "termination", "clock"):
     robot.write_joint_position_to_sim_index = lambda position, **kwargs: q.copy_(position)
     robot.write_joint_velocity_to_sim_index = lambda velocity, **kwargs: v.copy_(velocity)
     env = NS(device="cpu", num_envs=2, step_dt=.01, physics_dt=.01, _sim_step_counter=0,
-        cfg=NS(sim2real=NS(leg_order=["leg"], wheel_order=[]), sim=NS(use_newton_actuators=False)),
+        cfg=NS(decimation=2 if fault == "decimation" else 1, sim2real=NS(leg_order=["leg"], wheel_order=[]),
+               sim=NS(dt=.01, use_newton_actuators=False)),
         scene={"robot": robot}, sim=NS(is_running=lambda: True),
         action_manager=NS(active_terms=["leg"], get_term=lambda name: action))
     def reset():
@@ -781,10 +817,11 @@ for fault in (None, "transient", "final", "termination", "clock"):
         return None, None, torch.tensor([fault == "termination", False]), torch.zeros(2, dtype=torch.bool), None
     env.reset, env.step = reset, step
     data = {"time": torch.tensor([0., .01], dtype=torch.float64), "dof_pos": torch.zeros(2, 1), "des_dof_pos": torch.zeros(2, 1)}
-    opt = CMAESOptimizer(torch.zeros(5, 2), 2, sys.argv[1], ["leg"], 1, data, "cpu")
+    opt = CMAESOptimizer(torch.zeros(5, 2), 2, sys.argv[1], ["leg"], 1, data, "cpu", reference_settings={"dt": .01})
     try:
         fit.fit_reference(env, data, opt)
-    except (ValueError, RuntimeError):
+    except (ValueError, RuntimeError) as error:
+        if fault == "decimation": assert "decimation=1" in str(error) and env._sim_step_counter == 0
         assert fault is not None
         assert opt.iteration_counter == 0 and opt.best_result is None
         assert not (opt.log_dir / "best_result.pt").exists()

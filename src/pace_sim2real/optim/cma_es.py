@@ -102,14 +102,16 @@ class CMAESOptimizer:
             ):
                 raise ValueError(f"Invalid reference field {field}")
         self.settings = dict(reference_settings or {})
+
+        dt = self.settings["dt"]
+        if not math.isfinite(dt) or dt <= 0:
+            raise ValueError("Fitting requires a single finite positive dt")
         self.settings.update(
             position_error_scale=position_error_scale,
             velocity_error_scale=velocity_error_scale,
             position_weight=position_weight,
             velocity_weight=velocity_weight,
             bounds=self.bounds.cpu(),
-            leg_order=self.leg_order,
-            wheel_order=self.wheel_order,
         )
         self.active = self.bounds[:, 1] > self.bounds[:, 0]
         dimension = int(self.active.sum())
@@ -140,7 +142,8 @@ class CMAESOptimizer:
         self.squared_errors = torch.zeros((population_size, 2), device=self.device, dtype=torch.float64)
         self.scores = torch.zeros(population_size, device=self.device, dtype=torch.float64)
         self._reset_population()
-        self._atomic_save({"schema_version": 2, **self.data, **self.settings}, self.log_dir / "config.pt")
+        config = dict(schema_version=2, leg_order=self.leg_order, wheel_order=self.wheel_order)
+        self._atomic_save({**config, **self.data, **self.settings}, self.log_dir / "config.pt")
 
     def ask(self):
         return self.optimizer.ask() if self.optimizer is not None else torch.empty(0).numpy()
@@ -224,8 +227,32 @@ class CMAESOptimizer:
         if self.best_result is None or best_score < self.best_result["score"]:
             self.best_result = self._result(index, host_means, best_score)
             self._atomic_save(self.best_result, self.log_dir / "best_result.pt")
+        host_params = self.sim_params.detach().cpu()
         if self.save_optimization_process:
-            self.sim_params_buffer.append(self.sim_params.detach().cpu().clone())
+            self.sim_params_buffer.append(host_params)
+        generation = self.iteration_counter
+        groups = [
+            ("1_Armature", self.armature_idx, self.joint_order),
+            ("2_Viscous_Friction", self.damping_idx, self.joint_order),
+            ("3_Static_Dynamic_Friction", self.friction_idx, self.joint_order),
+            ("4_Bias", self.bias_idx, self.leg_order),
+        ]
+        if self.separate_dynamic_friction:
+            groups.append(("6_Dynamic_Friction_Ratio", self.friction_ratio_idx, self.joint_order))
+            dynamic_friction = host_params[index, self.friction_idx] * host_params[index, self.friction_ratio_idx]
+            for name, value in zip(self.joint_order, dynamic_friction, strict=True):
+                self.writer.add_scalar(f"6_Dynamic_Friction/best_{name}", value, generation)
+        for group, columns, names in groups:
+            for name, values in zip(names, host_params[:, columns].unbind(dim=1), strict=True):
+                self.writer.add_histogram(f"{group}/distribution_{name}", values, generation)
+                self.writer.add_scalar(f"{group}/best_{name}", values[index], generation)
+
+        delay = host_params[:, self.delay_idx]
+        self.writer.add_histogram("0_Delay/distribution", delay, generation)
+        self.writer.add_scalar("0_Delay/best", delay[index], generation)
+        self.writer.add_scalar("0_Episode/score", best_score, generation)
+        self.writer.add_scalar("0_Episode/max_score", host_scores.max(), generation)
+        self.writer.add_scalar("0_Episode/diff_score", self._relative_spread, generation)
         self.writer.add_scalar("score/best", best_score, self.iteration_counter)
         self.writer.add_scalar("error/position_rmse_rad", host_means[index, 0].sqrt().item(), self.iteration_counter)
         if self.wheel_order:
@@ -279,7 +306,7 @@ class CMAESOptimizer:
             settings=dict(self.settings),
             delay_candidate=delay,
             delay_steps=math.floor(delay),
-            delay_seconds=math.floor(delay) * self.settings.get("physics_dt", 0.0),
+            delay_seconds=math.floor(delay) * self.settings["dt"],
         )
         if self.wheel_order:
             result["sim_dof_vel"] = self.sim_dof_vel_buffer[index].detach().cpu().clone()
@@ -312,8 +339,7 @@ class CMAESOptimizer:
             initial_wheel_velocity is None or initial_wheel_velocity.shape != (self.population_size, num_wheels)
         ):
             raise ValueError("Mixed task requires initial wheel velocity")
-        backend = type(articulation).__module__
-        newton = "newton" in backend
+        newton = "newton" in type(articulation).__module__
         if newton and self.separate_dynamic_friction:
             raise ValueError("Newton does not support separate dynamic friction identification")
         drives = []
@@ -356,7 +382,6 @@ class CMAESOptimizer:
         self.settings.update(
             initial_wheel_angles=position[:, num_legs:].cpu(),
             initial_leg_velocities=velocity[:, :num_legs].cpu(),
-            backend=backend,
         )
         articulation.write_joint_position_to_sim_index(position=position, joint_ids=ids, env_ids=env_ids)
         articulation.write_joint_velocity_to_sim_index(velocity=velocity, joint_ids=ids, env_ids=env_ids)
