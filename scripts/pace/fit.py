@@ -137,6 +137,70 @@ def main(argv: list[str] | None = None):
         fit_reference(env, data, opt)
 
 
+@contextlib.contextmanager
+def _replay_joint_actions(base):
+    """Capture the stock action manager's GPU writes for one rollout between resets."""
+    from isaaclab.managers import ActionManager
+
+    manager = base.action_manager
+    if (
+        torch.device(base.device).type != "cuda"
+        or type(manager) is not ActionManager
+        or not manager.is_graphable
+        or base.scene.is_graphable
+        or not type(base.sim.backend_manager).__module__.startswith("isaaclab_newton.")
+        or "apply_action" in vars(manager)
+        or "process_action" in vars(manager)
+        or "interval" in base.event_manager.active_terms
+        or base.recorder_manager.active_terms
+    ):
+        yield
+        return
+
+    # resolve_action_mapping restricts terms to absolute position and velocity actions.
+    # Their processed buffers stay in place. Use separate graphs so env.step still
+    # runs its recorder, counters, and all Python actuator/physics work in order.
+    static_action = torch.empty_like(manager.action)
+    process_graph = torch.cuda.CUDAGraph()
+    try:
+        # Scope capture to this stream. The higher-level torch.cuda.graph context
+        # empties the process-wide allocator cache on every rollout.
+        with torch.cuda.stream(torch.cuda.Stream(device=static_action.device)):
+            process_graph.capture_begin()
+            try:
+                manager.process_action(static_action)
+            finally:
+                process_graph.capture_end()
+        with wp.ScopedCapture(device=base.device) as capture:
+            manager.apply_action()
+    except torch.OutOfMemoryError:
+        raise
+    except RuntimeError as exc:
+        # A CUDA runtime without graph support can still replay the original steps.
+        if "captur" not in str(exc).lower() and "graph" not in str(exc).lower():
+            raise
+        yield
+        return
+
+    apply_graph = capture.graph
+    assert apply_graph is not None
+
+    def process_action(action):
+        static_action.copy_(action)
+        process_graph.replay()
+
+    def apply_action():
+        wp.capture_launch(apply_graph)
+
+    manager.process_action = process_action
+    manager.apply_action = apply_action
+    try:
+        yield
+    finally:
+        del manager.apply_action
+        del manager.process_action
+
+
 @torch.inference_mode()
 def fit_reference(env, data, opt):
     """Replay prepacked commands and score each completed rollout as one batch."""
@@ -151,10 +215,10 @@ def fit_reference(env, data, opt):
     timestamps = data["time"].detach().cpu().tolist()
     reference = {key: value.to(base.device) for key, value in data.items() if key not in ("time", "original_time")}
     batch, count = base.num_envs, len(timestamps)
-    measured_positions = reference["dof_pos"].unsqueeze(0).expand(batch, -1, -1)
-    measured_velocities = reference["dof_vel"].unsqueeze(0).expand(batch, -1, -1) if wheels else None
-    initial = measured_positions[:, 0]
-    initial_velocity = measured_velocities[:, 0] if measured_velocities is not None else None
+    measured_positions = reference["dof_pos"].double().unsqueeze(0).expand(batch, -1, -1)
+    measured_velocities = reference["dof_vel"].double().unsqueeze(0).expand(batch, -1, -1) if wheels else None
+    initial = reference["dof_pos"][0].expand(batch, -1)
+    initial_velocity = reference["dof_vel"][0].expand(batch, -1) if wheels else None
     actions = pack_actions(mapping, reference["des_dof_pos"], reference.get("des_dof_vel"))
     actions = actions.unsqueeze(1).expand(-1, batch, -1)
     # Reuse full-state buffers across generations; include the post-step final state.
@@ -166,17 +230,18 @@ def fit_reference(env, data, opt):
             robot, mapping["leg_ids"] + mapping["wheel_ids"], initial, initial_wheel_velocity=initial_velocity
         )
         origin = base._sim_step_counter
-        for step, timestamp in enumerate(timestamps):
-            if not base.sim.is_running():
-                raise RuntimeError("Simulation closed before fitting completed")
-            elapsed = (base._sim_step_counter - origin) * dt
-            if abs(elapsed - timestamp) > 1e-7 + 1e-5 * abs(elapsed):
-                raise ValueError("Reference time does not match actual simulation time")
-            positions[step].copy_(robot.data.joint_pos.torch)
-            velocities[step].copy_(robot.data.joint_vel.torch)
-            result = env.step(actions[step])
-            if len(result) == 5 and (result[2] | result[3]).any():
-                raise RuntimeError("Environment terminated/reset during fitting")
+        with _replay_joint_actions(base):
+            for step, timestamp in enumerate(timestamps):
+                if not base.sim.is_running():
+                    raise RuntimeError("Simulation closed before fitting completed")
+                elapsed = (base._sim_step_counter - origin) * dt
+                if abs(elapsed - timestamp) > 1e-7 + 1e-5 * abs(elapsed):
+                    raise ValueError("Reference time does not match actual simulation time")
+                positions[step].copy_(robot.data.joint_pos.torch)
+                velocities[step].copy_(robot.data.joint_vel.torch)
+                result = env.step(actions[step])
+                if len(result) == 5 and (result[2] | result[3]).any():
+                    raise RuntimeError("Environment terminated/reset during fitting")
         positions[-1].copy_(robot.data.joint_pos.torch)
         velocities[-1].copy_(robot.data.joint_vel.torch)
         if not (torch.isfinite(positions).all() & torch.isfinite(velocities).all()):

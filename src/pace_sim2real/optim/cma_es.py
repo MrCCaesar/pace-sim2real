@@ -17,6 +17,7 @@ import cmaes
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.summary import histogram, scalar
 
 
 def _error_scale(value: float | list[float], width: int, name: str, device: torch.device) -> torch.Tensor:
@@ -256,38 +257,7 @@ class CMAESOptimizer:
         else:
             physical_mean = host_params[0]
         generation = self.iteration_counter
-        groups = [
-            ("1_Armature", self.armature_idx, self.joint_order),
-            ("2_Viscous_Friction", self.damping_idx, self.joint_order),
-            ("3_Static_Dynamic_Friction", self.friction_idx, self.joint_order),
-            ("4_Bias", self.bias_idx, self.leg_order),
-        ]
-        if self.separate_dynamic_friction:
-            groups.append(("6_Dynamic_Friction_Ratio", self.friction_ratio_idx, self.joint_order))
-            dynamic_friction = host_params[index, self.friction_idx] * host_params[index, self.friction_ratio_idx]
-            for name, value in zip(self.joint_order, dynamic_friction, strict=True):
-                self.writer.add_scalar(f"6_Dynamic_Friction/best_{name}", value, generation)
-        for group, columns, names in groups:
-            for name, values, mean in zip(
-                names, host_params[:, columns].unbind(dim=1), physical_mean[columns], strict=True
-            ):
-                self.writer.add_scalar(f"{group}/mean_{name}", mean, generation)
-                self.writer.add_histogram(f"{group}/distribution_{name}", values, generation)
-                self.writer.add_scalar(f"{group}/best_{name}", values[index], generation)
-
-        delay = host_params[:, self.delay_idx]
-        self.writer.add_histogram("0_Delay/distribution", delay, generation)
-        self.writer.add_scalar("0_Delay/best", delay[index], generation)
-        self.writer.add_scalar("0_Delay/mean", physical_mean[self.delay_idx], generation)
-        self.writer.add_scalar("0_Episode/score", best_score, generation)
-        self.writer.add_scalar("0_Episode/max_score", host_scores.max(), generation)
-        self.writer.add_scalar("0_Episode/diff_score", self._relative_spread, generation)
-        self.writer.add_scalar("score/best", best_score, self.iteration_counter)
-        self.writer.add_scalar("error/position_rmse_rad", host_means[index, 0].sqrt().item(), self.iteration_counter)
-        if self.wheel_order:
-            self.writer.add_scalar(
-                "error/velocity_rmse_rad_s", host_means[index, 1].sqrt().item(), self.iteration_counter
-            )
+        self._log_generation(host_params, physical_mean, index, host_scores, host_means)
         if self.save_interval > 0 and generation % self.save_interval == 0:
             self._atomic_save(physical_mean, self.log_dir / f"mean_{generation:03d}.pt")
         print(
@@ -299,6 +269,52 @@ class CMAESOptimizer:
         self.scores_counter = 0
         self.squared_errors.zero_()
         self._reset_population()
+
+    def _log_generation(self, host_params, physical_mean, index, host_scores, host_means):
+        # All values share one TensorBoard step. Queue a single event, retaining
+        # the original scalar precision and SummaryWriter's histogram buckets.
+        summary = scalar("0_Episode/score", host_scores[index])
+        bins = np.asarray(self.writer.default_bins)
+
+        def add_scalar(tag, value):
+            summary.value.add(tag=tag, simple_value=float(value))
+
+        def add_histogram(tag, values):
+            summary.value.extend(histogram(tag, values, bins=bins).value)
+
+        best_score = host_scores[index]
+        groups = [
+            ("1_Armature", self.armature_idx, self.joint_order),
+            ("2_Viscous_Friction", self.damping_idx, self.joint_order),
+            ("3_Static_Dynamic_Friction", self.friction_idx, self.joint_order),
+            ("4_Bias", self.bias_idx, self.leg_order),
+        ]
+        if self.separate_dynamic_friction:
+            groups.append(("6_Dynamic_Friction_Ratio", self.friction_ratio_idx, self.joint_order))
+            dynamic_friction = host_params[index, self.friction_idx] * host_params[index, self.friction_ratio_idx]
+            for name, value in zip(self.joint_order, dynamic_friction, strict=True):
+                add_scalar(f"6_Dynamic_Friction/best_{name}", value)
+        for group, columns, names in groups:
+            for name, values, mean in zip(
+                names, host_params[:, columns].unbind(dim=1), physical_mean[columns], strict=True
+            ):
+                add_scalar(f"{group}/mean_{name}", mean)
+                add_histogram(f"{group}/distribution_{name}", values)
+                add_scalar(f"{group}/best_{name}", values[index])
+
+        delay = host_params[:, self.delay_idx]
+        add_histogram("0_Delay/distribution", delay)
+        add_scalar("0_Delay/best", delay[index])
+        add_scalar("0_Delay/mean", physical_mean[self.delay_idx])
+        add_scalar("0_Episode/max_score", host_scores.max())
+        add_scalar("0_Episode/diff_score", self._relative_spread)
+        add_scalar("score/best", best_score)
+        add_scalar("error/position_rmse_rad", host_means[index, 0].sqrt())
+        if self.wheel_order:
+            add_scalar("error/velocity_rmse_rad_s", host_means[index, 1].sqrt())
+        writer = self.writer._get_file_writer()
+        assert writer is not None
+        writer.add_summary(summary, self.iteration_counter)
 
     def _result(self, index, means, score):
         params = self.sim_params[index].detach().cpu().clone()

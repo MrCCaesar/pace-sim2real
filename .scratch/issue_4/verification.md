@@ -281,3 +281,18 @@ User requested refactoring against current code. Updated only the plot consumer,
 Tests: the new current-task/latest-complete CLI test first exposed the old default-directory failure. Final `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run python -m pytest -q`:102passed,2 existing cmaes warnings,26.35s. Targeted Pyright for plot script/test file:0errors0warnings. Applicable changed-file pre-commit hooks passed after formatting; pre-existing absent license template remains skipped. Coverage includes current default/latest incomplete runs, explicit historical-folder fallback, namespaced task and legacy alias/conflict, pure-leg and mixed figure values, generation score curves, means-only diagnostics/conflicts, missing desired/candidate fields, invalid time and tampered score.
 
 Actual artifacts: `MPLBACKEND=Agg uv run python scripts/pace/plot_trajectory.py --task Isaac-Pace-Anymal-D-v0 --plot_trajectory` exited0 using existing real fit output. Agg emits its expected noninteractive show warning. Existing Newton and PhysX controlled mixed best_result.pt records passed load_result and produced two figures each, with scores .00014878822058435735 and .00007651021209868479. Figures saved only under /tmp/pace-<backend>-refactored-plot-<group>.png. No simulations rerun. Changes remain uncommitted; no push or issue operations were requested/performed for this follow-up.
+
+### Fitting performance against 912c7a6
+
+The baseline uses the exact fit entry point and optimizer sources from 912c7a6. Both versions run the same X5 Newton MJWarp CUDA task, two environments, identical measured chirp data and seeds, headless, epsilon=0, default checkpoint interval, and full TensorBoard diagnostics. Each timing is the median of three fresh processes per variant, run sequentially with interleaved variants. The fit timer starts at fit_reference and ends after optimizer.close, with CUDA synchronized at these boundaries. The entry timer covers fit.main, including scene creation and teardown; Python imports before main are excluded.
+
+| X5 workload | Scope | Baseline seconds | Optimized seconds | Time reduction |
+| --- | --- | ---: | ---: | ---: |
+| 400 samples, 11 generations | Fit through final persistence | 6.955 | 5.822 | 16.29% |
+| 400 samples, 11 generations | Entry including scene startup | 14.150 | 14.119 | 0.22% |
+| All 8,000 samples, 3 generations | Fit through final persistence | 29.680 | 24.755 | 16.59% |
+| All 8,000 samples, 3 generations | Entry including scene startup | 35.207 | 30.464 | 13.47% |
+
+For the short workload the observed scene creation times ranged from 2.81 to 9.80 seconds. The short-workload entry timer did not establish a 10% reduction. Every X5 run produced equal loaded fit configuration, evaluated best record and periodic means, and identical values and steps in all 61 histogram and 128 scalar tags. Timing raw data and the comparison driver are in the temporary experiment directory `/tmp/pace-opt-912c7a6-zmMWqiU9/`. The comparison covers loaded output values and steps on the same hardware. Each run has its own event wall times.
+
+An additional ANYmal Newton run (two environments, 40 samples, two generations, position-action scale 0.75 and offset 0.1, progress saving enabled) produced matching configuration, best result, means, population history and all 152 TensorBoard tags. This was a pure-position compatibility check. The unchanged suite passed with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q --tb=short` (104 passed, four existing cmaes warnings). Targeted Pyright reported zero errors; the optimizer Ruff check, formatting of both changed Python files and `git diff --check` passed.
