@@ -25,9 +25,9 @@ SEVNCE_PACE_ACTUATOR_CFG = PaceDCMotorCfg(
         ".*_foot_joint": 30.0,
     },
     actuator_velocity_limit={".*_hip_joint": 6.0, ".*_thigh_joint": 6.0, ".*_calf_joint": 8.0, ".*_foot_joint": 30.0},
-    stiffness={".*_hip_joint": 1500.0, ".*_thigh_joint": 1500.0, ".*_calf_joint": 1500.0, ".*_foot_joint": 0.0},
+    stiffness={".*_hip_joint": 600.0, ".*_thigh_joint": 600.0, ".*_calf_joint": 600.0, ".*_foot_joint": 0.0},
     # P gain in Nm/rad
-    damping={".*_hip_joint": 30.0, ".*_thigh_joint": 30.0, ".*_calf_joint": 30.0, ".*_foot_joint": 20.0},
+    damping={".*_hip_joint": 10.0, ".*_thigh_joint": 10.0, ".*_calf_joint": 10.0, ".*_foot_joint": 20.0},
     # D gain in Nm s/rad
     encoder_bias=0.0,  # encoder bias in radians
     # note: modeling coulomb friction if friction = dynamic_friction
