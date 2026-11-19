@@ -400,3 +400,20 @@ CR4 正式 Verify 已完成。逐工单证据、数值、全量回归三项失�
 - T2、T3 的 CPU 用例位于 `tests/test_filter_chirp_data.py`。执行 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q tests/test_filter_chirp_data.py tests/test_mixed_collection_fit.py::test_reference_loader_requires_explicit_legacy_time_and_bias_provenance`，25 项通过，含真实 X5 样例。逐列统计的最大通带幅值变化为腿位置 0.159%、轮速 0.151%；≥30 Hz 最小能量降幅分别为 47.66、47.86 dB。首/末帧最大改变量分别为腿位置 0.00225/0.00986 rad，轮速 0.01093/0.35371 rad/s。
 - README 已加入默认和显式参数示例。另在临时目录复制真实 X5 输入，分别执行 `uv run --no-sync python scripts/pace/filter_chirp_data.py "$record"` 及带 `--cutoff_hz 25 --order 4 --output "$out"` 的命令。两个进程均成功，`load_reference_data` 读回两份文件均为 8000 帧、12 列位置和 4 列速度，且两组参数产生的滤后位置有差异。
 - 对上述新增脚本和测试执行 `.venv/bin/ruff check`、`.venv/bin/ruff format --check` 和 `uvx --offline pyright --pythonpath .venv/bin/python`，均通过。
+
+## CR6 滤波诊断与可视化实施计划
+
+状态为 Approved。用户已批准以下三项任务并进入 Implement。任务采用已批准的 [Q7–Q9 与 CR6-A1–A4](spec.md#cr6-滤波诊断与可视化specify--approved)、[输入输出契约](interfaces.md#cr6-滤波诊断命令行与输出契约)和 [ADR 0015](../../adr/0015-filter-diagnostics-spectrum.md)。
+
+| 任务与依赖 | 交付物 | 完成条件 |
+| --- | --- | --- |
+| CR6-T1 · 计算五项指标。无前置任务 | 在现有 `scripts/pace/filter_chirp_data.py` 中按组计算峰峰值变化、相位折算时差变化、跟踪 RMSE 比例、有效频点幅值变化和 ≥30 Hz 能量降幅。复用同组加窗频谱，分别统计幅值和相位的有效关节、组合数和频率范围。 | 在 `tests/test_filter_chirp_data.py` 固化 A3 的手算案例，核对两列不同幅值的组内聚合、跨 ±179° 的相位，以及零分母、部分常量列、弱信号、无频点、奈奎斯特端点和精确零能量对应的数值或不可用原因。 |
+| CR6-T2 · 命令行报告与真实 X5 回归。依赖 T1 | 接入 `--analysis_band_hz LOW HIGH` 和分组报告。非法参数在创建输出前报错；成功保存后打印路径、五项指标、单位、覆盖情况和不可用原因。以将被保存的测量精度计算诊断。 | 按 A1 检查完整、纯位置、纯速度与空列组；改变分析带后滤波张量逐元素一致，保留原文件保护和拟合加载检查。按 A2 在临时目录对指定 X5 文件分别运行四阶 20 Hz、25 Hz，逐组核对五项指标、组合数和频率范围，误差限沿用规格表。 |
+| CR6-T3 · 可选绘图与中文用法。依赖 T2 | 接入 `--plot`。保存和打印后按需加载 Matplotlib，逐关节叠加指令、滤前和滤后三条曲线，并显示滤前单边幅值谱。在根目录 `README.md` 的滤波一节给出默认诊断、自定义分析带和开启绘图的示例。 | 按 A4 用无显示器后端核对曲线数据、单位、从 1 起始的列号和奇偶长度的频率端点；对比开关两种模式的报告数值及输出张量。检查绘图显示失败时的提示包含已保存路径。 |
+
+**验证交接。** 本机 X5 样例已核对 SHA-256，与 [Research 实验](research.md#cr6-两项临时-cpu-实验已执行) 一致。正式 Verify 使用 `MPLBACKEND=Agg OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -rs tests/test_filter_chirp_data.py`，确认 X5 用例实际执行，记录四组实测值与覆盖数，并对照 README 示例检查 CLI。若验收环境缺少匹配样例，单独标记 A2 待验。
+
+### CR6 Implement 交接
+
+- CR6-T1、T2 已在原脚本实现分组诊断、频带选择和覆盖报告。上述 pytest 命令运行 42 项，全部通过（含真实 X5 四阶 20 Hz、25 Hz）。手算与退化输入回归涵盖相位折返、常量列、无效相位、零能量和奈奎斯特端点。
+- CR6-T3 已实现绘图和中文 README 用法。在真实 X5 输入的临时副本上执行 `uv run python scripts/pace/filter_chirp_data.py "$record"` 及带 `--analysis_band_hz 0.1 4 --plot --output "$trial/x5_band4.pt"` 的命令（CPU、Agg）。两次结果的全部五个张量逐元素一致。默认带下位置、速度各有 1643、613 个有效组合；改为 0.1–4 Hz 后各有 683、235 个。绘图回归检查奇偶帧数、各列曲线及频谱；本轮未操作桌面窗口。

@@ -1,6 +1,8 @@
 # Issue #4 — Status
 
-Current stage: CR5 Verify 已完成。CR5-A1–A4 全部通过，24 项专项测试全部执行，真实 X5 的两份临时输出均通过拟合加载器。数值与端点观察见 [CR5 验收记录](verification.md#cr5-离线采集数据滤波验收)。新增回归文件随滤波功能一并纳入版本控制。
+Current stage: CR6 Verify 已完成。CR6-A1–A4 全部通过，42 项专项测试全部执行。真实 X5 四组指标与研究基线一致，已核对自定义频带、绘图开关和拟合加载兼容性。[验收记录](verification.md#cr6-滤波诊断与可视化验收)
+
+CR5 Verify 已完成。CR5-A1–A4 全部通过，24 项专项测试全部执行，真实 X5 的两份临时输出均通过拟合加载器。数值与端点观察见 [CR5 验收记录](verification.md#cr5-离线采集数据滤波验收)。新增回归文件随滤波功能一并纳入版本控制。
 
 Previous stage: CR4 Verify 及文件名约定后续修订已完成。#17–#21 软件验收通过，原有三项路径差异已解决。两类集成用例同时启用后，全套 150 项通过。Isaac Lab 默认采集和拟合使用 chirp_data.pt；X5 原生 MuJoCo 采集使用 mujoco_chirp_data.pt，已验证直接指定该文件拟合。
 

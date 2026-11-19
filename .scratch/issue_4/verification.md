@@ -425,3 +425,37 @@ sha256sum "$record" "data/$task/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt"
 `uv lock --check --offline`、`.venv/bin/ruff check scripts/pace/filter_chirp_data.py tests/test_filter_chirp_data.py`、相同文件的 `.venv/bin/ruff format --check` 和 `uvx --offline pyright --pythonpath .venv/bin/python scripts/pace/filter_chirp_data.py tests/test_filter_chirp_data.py` 均通过。
 
 **边界与交付。** 真实数据缺少无噪声参考，本轮核对到拟合数据加载入口，未运行参数优化或仿真。提交时已显式纳入 `tests/test_filter_chirp_data.py`，提交前复跑 24 项专项测试全部通过。
+
+## CR6 滤波诊断与可视化验收
+
+**结果。** 用户批准进入 Verify 后，在当前工作区运行专项测试，42 项通过，0 项跳过（1.99 s）。[CR6-A1–A4](spec.md#cr6-滤波诊断与可视化specify--approved) 全部通过。
+
+- **A1 文件与报告。** 完整、纯位置、纯速度和空列组用例通过。另用真实 X5 副本分别生成默认、25 Hz、0.1–4 Hz 分析带、0.1–4 Hz 分析带加绘图四份文件。四份均由拟合加载器按 0.0025 s 读回，保留原字段顺序、形状、类型，以及时间与指令的原值。固定滤波参数时，三份输出的全部五个张量逐元素相等；改变滤波截止频率时，两组测量均发生变化。输入副本与原件的 SHA-256 均为 `8ab1ca9e3a430c0b4ad7fa951cf53dbc352d8e45263b6ee085bc300aa25732d8`。
+- **A2 真实数据。** 下表来自独立 CLI 进程，默认分析频带为 0.1–10 Hz。四行均在已批准的研究基线容差内。两种设置均覆盖 12/12 个位置关节与 4/4 个速度关节。幅值和时差各自的有效组合数为腿位置 1643、轮速 613；两组入选频率的并集范围均为 1.15–8.95 Hz。
+- **A3 可计算性。** 手算两列用例验证 50% 的峰峰值和谱幅变化，以及整组 RMSE 比例。8 Hz 跨越 ±179° 的相位用例通过。零跟踪误差、部分常量列、滤后分量消失或过弱、无有效频点、50/60 Hz 采样的高频边界均通过；输出区分不可计算值与正无穷降幅。
+- **A4 绘图与使用说明。** 针对奇、偶样本数核对三条时域曲线、标识、坐标轴单位及单边滤前频谱。真实 X5 在 0.1–4 Hz 下绘图开关两种模式的分组报告逐行相同，腿位置、轮速各有 683、235 个有效组合。Agg 后端提示无法打开窗口并给出已保存文件路径；模拟显示异常的用例也通过。本轮实测图形数据与无窗口执行路径，未手动操作桌面 GUI。
+
+| 单程截止与测量组 | 峰峰值最大变化 | 最大时差变化 | 跟踪 RMSE 比例 | 有效频点最大幅值变化 | ≥30 Hz 最小能量降幅 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 20 Hz · 腿位置 | 29.014228% | 0.000879503 ms | 99.399276% | 0.1591901% | 47.659164 dB |
+| 20 Hz · 轮速 | 17.008785% | 0.002801558 ms | 99.218669% | 0.1513036% | 47.855778 dB |
+| 25 Hz · 腿位置 | 28.047773% | 0.000139576 ms | 99.423538% | 0.0257577% | 32.802841 dB |
+| 25 Hz · 轮速 | 15.879269% | 0.000453207 ms | 99.269650% | 0.0244771% | 32.991385 dB |
+
+**执行命令。** 以下从仓库根目录运行，输出位于本轮新建的临时目录。
+
+```bash
+MPLBACKEND=Agg OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -rs tests/test_filter_chirp_data.py
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MPLBACKEND=Agg UV_NO_SYNC=1
+trial=/tmp/pace-cr6-verify-HTTiNC1h
+export MPLCONFIGDIR="$trial/mpl"
+src=data/Isaac-Pace-Sevnce-X5-v0/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt
+record="$trial/x5.pt"
+cp "$src" "$record"
+uv run python scripts/pace/filter_chirp_data.py "$record" > "$trial/default.txt"
+uv run python scripts/pace/filter_chirp_data.py "$record" --order 4 --cutoff_hz 25 --output "$trial/hz25.pt" > "$trial/hz25.txt"
+uv run python scripts/pace/filter_chirp_data.py "$record" --analysis_band_hz 0.1 4 --plot --output "$trial/band4-plot.pt" > "$trial/band4-plot.txt" 2> "$trial/plot-stderr.txt"
+uv run python scripts/pace/filter_chirp_data.py "$record" --analysis_band_hz 0.1 4 --output "$trial/band4.pt" > "$trial/band4.txt"
+```
+
+对 `scripts/pace/filter_chirp_data.py` 和 `tests/test_filter_chirp_data.py` 执行 `.venv/bin/ruff check`、`.venv/bin/ruff format --check` 和 `uvx --offline pyright --pythonpath .venv/bin/python`。Ruff 检查及格式检查通过，Pyright 为 0 错误、0 警告。

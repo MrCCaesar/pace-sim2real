@@ -102,10 +102,15 @@ task=Isaac-Pace-Sevnce-X5-v0
 record=data/$task/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt
 uv run python scripts/pace/filter_chirp_data.py "$record"
 uv run python scripts/pace/filter_chirp_data.py "$record" --cutoff_hz 25 --order 4 --output "data/$task/x5_25Hz.pt"
+uv run python scripts/pace/filter_chirp_data.py "$record" --analysis_band_hz 0.1 4 --plot --output "data/$task/x5_band_0.1_4.pt"
 uv run python scripts/pace/fit.py --task "$task" env.sim2real.data_dir=mujoco_0.1_10Hz_kp1500_kd30_chirp_data_filtered.pt
 ```
 
 默认 20 Hz 适用于本例 400 Hz 采样、最高 10 Hz 的扫频。单程截止处经过前后向处理后只保留一半稳态幅值。首尾样本使用奇对称延拓，拟合使用的首帧测量也会随滤波改变。输入和输出路径相对当前目录解析，输出须为新文件；拟合时沿用原记录的位置和速度列序配置。[滤波脚本](scripts/pace/filter_chirp_data.py)
+
+保存后，脚本按位置组和速度组分别打印五项指标。最大峰峰值变化反映整段关节运动范围的变化；跟踪 RMSE 比例以期望指令为参考，90% 表示滤后的整组跟踪 RMSE 为滤前的 90%。有效频点上的最大幅值变化和最大时差变化用于检查受激成分；≥30 Hz 能量的最小降幅给出组内抑制最弱的关节所达到的 dB 值。
+
+`--analysis_band_hz LOW HIGH` 默认取 0.1–10 Hz，只控制频域幅值和时差的分析范围。报告给出有效关节数，两项频域极值还列出有效的关节与频点组合数和频率范围。分母为零、缺少有效频点等情况显示 `N/A` 与原因。默认仅打印；加 `--plot` 后可按组和列号交互查看期望、滤前、滤后三条时间曲线，以及滤前测量在完整可观测频段的单边幅值谱。
 
 ## 参考数据与 CMA-ES 拟合
 

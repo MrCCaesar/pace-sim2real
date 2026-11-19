@@ -2,6 +2,7 @@
 """CPU regressions for the offline filter CLI, including the CR5 research signals."""
 
 import hashlib
+import re
 import runpy
 import tomllib
 from pathlib import Path
@@ -14,7 +15,8 @@ from scipy import signal
 from scipy.signal.windows import hann
 
 ROOT = Path(__file__).resolve().parents[1]
-main = runpy.run_path(str(ROOT / "scripts/pace/filter_chirp_data.py"))["main"]
+script = runpy.run_path(str(ROOT / "scripts/pace/filter_chirp_data.py"))
+main = script["main"]
 load_reference_data = runpy.run_path(str(ROOT / "src/pace_sim2real/utils/collection_contracts.py"))[
     "load_reference_data"
 ]
@@ -208,3 +210,169 @@ def test_real_x5_file(tmp_path):
             f"{key}: max gain change {gain_change:.3%}, min attenuation {attenuation.min():.2f} dB,"
             f" first/last max change {first:.5f}/{last:.5f} {unit}"
         )
+
+
+def metrics(raw, filtered, target, fs=256, band=(8, 8)):
+    columns = [np.asarray(x, dtype=float).reshape(len(raw), -1) for x in (raw, filtered, target)]
+    rows, _, _ = script["_group_diagnostics"](*columns, fs, band)
+    return [metric for _, _, metric in rows]
+
+
+def test_group_metrics_with_known_gain_tracking_and_wrapped_phase():
+    phase = 2 * np.pi * 8 * np.arange(256) / 256
+    tone = np.sin(phase)
+    raw = np.column_stack((tone, 2 * tone))
+    filtered = np.column_stack((0.5 * tone, 1.5 * tone))
+    peak, delay, tracking, amplitude, high = metrics(raw, filtered, raw * 2)
+    assert [m.value for m in (peak, delay, tracking, amplitude)] == pytest.approx([50, 0, 100 * np.sqrt(8.5 / 5), 50])
+    assert all(m.joints == 2 for m in (peak, delay, tracking, amplitude))
+    assert high.value is None
+    _, delay, *_ = metrics(np.sin(phase + np.deg2rad(179)), np.sin(phase - np.deg2rad(179)), tone)
+    assert delay.value == pytest.approx(1000 * 2 / (360 * 8))
+
+
+def test_resolution_and_undefined_metrics():
+    tone = np.sin(2 * np.pi * 8 * np.arange(256) / 256)
+    zero = np.zeros_like(tone)
+    peak, delay, tracking, amplitude, high = metrics(tone, zero, tone)
+    assert peak.value == amplitude.value == pytest.approx(100)
+    assert delay.value is tracking.value is high.value is None
+    assert metrics(tone, tone * 1e-12, tone)[1].value is None
+    assert all(m.value is None for m in metrics(zero, zero, zero))
+    mixed = np.column_stack((tone, zero))
+    assert metrics(mixed, mixed, mixed)[3].joints == 1
+    assert metrics(tone, tone, zero)[3].value is None
+    assert metrics(tone, tone, tone, band=(0.1, 0.2))[3].value is None
+    alternating = (-1.0) ** np.arange(256)
+    assert metrics(alternating, alternating, alternating, fs=50)[4].value is None
+    for scale, expected in ((0.5, 20 * np.log10(2)), (2, -20 * np.log10(2)), (0, np.inf), (1e-18, None)):
+        _, delay, _, _, high = metrics(alternating, scale * alternating, alternating, fs=60, band=(30, 30))
+        assert delay.value is None
+        if expected is None:
+            assert high.value is None and "below resolution" in high.detail
+        else:
+            assert high.value == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("limits", [[], ["4"], ["5", "4"], ["0", "4"], ["nan", "4"], ["4", "inf"]])
+def test_invalid_analysis_band_protects_files(tmp_path, limits):
+    path = tmp_path / "record.pt"
+    torch.save(record(), path)
+    with pytest.raises(SystemExit) as exc:
+        main([str(path), "--analysis_band_hz", *limits])
+    assert exc.value.code and list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("legs,wheels", [(2, None), (None, 1), (1, 2), (0, 2), (1, 0)])
+def test_band_changes_only_spectral_selection(tmp_path, capsys, legs, wheels):
+    path = tmp_path / "record.pt"
+    torch.save(record(legs, wheels), path)
+    reports, saved = [], []
+    for hz in [("0.1", "10"), ("1000", "2000")]:
+        out = tmp_path / f"band-{hz[0]}.pt"
+        assert main([str(path), "--output", str(out), "--analysis_band_hz", *hz]) == 0
+        report = capsys.readouterr().out
+        assert report.splitlines()[0] == str(out)
+        assert ("Position (dof_pos)" in report) == bool(legs)
+        assert ("Velocity (dof_vel)" in report) == bool(wheels)
+        reports.append(report)
+        saved.append(torch.load(out, weights_only=True))
+    assert all(torch.equal(saved[0][key], saved[1][key]) for key in saved[0])
+    assert "no bins in requested band" in reports[1]
+    for label in ("Max peak-to-peak change", "Tracking RMSE ratio", "Min energy drop"):
+        assert [line for line in reports[0].splitlines() if label in line] == [
+            line for line in reports[1].splitlines() if label in line
+        ]
+
+
+@pytest.mark.skipif(not X5.is_file(), reason="CR6 real X5 recording is not available")
+@pytest.mark.parametrize(
+    "hz,expected",
+    [
+        (20, [[29.0142, 0.000880, 99.3993, 0.15919, 47.659], [17.0088, 0.002802, 99.2187, 0.15130, 47.856]]),
+        (25, [[28.0478, 0.000140, 99.4235, 0.02576, 32.803], [15.8793, 0.000453, 99.2696, 0.02448, 32.991]]),
+    ],
+)
+def test_x5_diagnostics_in_cli_report(tmp_path, capsys, hz, expected):
+    assert digest(X5) == X5_SHA256
+    assert main([str(X5), "--output", str(tmp_path / "out.pt"), "--cutoff_hz", str(hz)]) == 0
+    text = capsys.readouterr().out
+    assert text.count("1643 joint-frequency pairs, 1.15–8.95 Hz") == 2
+    assert text.count("613 joint-frequency pairs, 1.15–8.95 Hz") == 2
+    numbers = re.findall(r"^  [^:]+: ([.\deE+\-]+) (?:%|ms|dB) ", text, flags=re.MULTILINE)
+    actual = np.asarray(numbers, dtype=float).reshape(2, 5)
+    assert np.all(abs(actual - expected) <= [0.001, 0.00001, 0.001, 0.001, 0.01])
+
+
+@pytest.mark.parametrize("length", [159, 160])
+def test_plot_uses_recorded_columns_and_one_sided_raw_spectrum(tmp_path, capsys, monkeypatch, length):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    data = {key: x[:length] for key, x in record(legs=1, wheels=2).items()}
+    path = tmp_path / "raw.pt"
+    torch.save(data, path)
+    first, second = tmp_path / "off.pt", tmp_path / "on.pt"
+    assert main([str(path), "--output", str(first)]) == 0
+    plain = capsys.readouterr().out.splitlines()[1:]
+    shown = []
+    monkeypatch.setattr(plt, "show", lambda: shown.extend(plt.get_fignums()))
+    try:
+        assert main([str(path), "--output", str(second), "--plot"]) == 0
+        assert capsys.readouterr().out.splitlines()[1:] == plain
+        filtered = torch.load(second, weights_only=True)
+        for key, value in torch.load(first, weights_only=True).items():
+            assert torch.equal(filtered[key], value)
+        assert len(shown) == 3
+        window = hann(length, sym=False)
+        for fig_id, (key, col, group, unit) in zip(
+            shown,
+            [
+                ("dof_pos", 0, "Position", "rad"),
+                ("dof_vel", 0, "Velocity", "rad/s"),
+                ("dof_vel", 1, "Velocity", "rad/s"),
+            ],
+            strict=True,
+        ):
+            fig = plt.figure(fig_id)
+            assert fig.get_suptitle() == f"{group} · column {col + 1}"
+            series, spectrum = fig.axes
+            assert [line.get_label() for line in series.lines] == ["Target", "Raw", "Filtered"]
+            for line, source in zip(series.lines, [data["des_" + key], data[key], filtered[key]], strict=True):
+                np.testing.assert_array_equal(line.get_xdata(), data["time"].numpy())
+                np.testing.assert_array_equal(line.get_ydata(), source[:, col].numpy())
+            assert series.get_ylabel() == f"{group} ({unit})" and series.get_xlabel() == "Time (s)"
+            assert spectrum.get_ylabel() == f"Raw amplitude ({unit})" and spectrum.get_xlabel() == "Frequency (Hz)"
+            raw = data[key][:, col].double().numpy()
+            # Fold the two-sided DFT explicitly, including the unpaired DC and even-length Nyquist bins.
+            two_sided = abs(np.fft.fft((raw - raw.mean()) * window)) / window.sum()
+            expected = two_sided[: length // 2 + 1].copy()
+            for k in range(1, (length + 1) // 2):
+                expected[k] += two_sided[-k]
+            (line,) = spectrum.lines
+            np.testing.assert_allclose(np.asarray(line.get_xdata()), np.fft.rfftfreq(length, 1 / 160))
+            np.testing.assert_allclose(np.asarray(line.get_ydata()), expected, atol=1e-12)
+    finally:
+        plt.close("all")
+
+
+def test_display_failure_reports_saved_output(tmp_path, capsys, monkeypatch):
+    import matplotlib.pyplot as plt
+
+    def fail():
+        raise RuntimeError("display unavailable")
+
+    monkeypatch.setattr(plt, "show", fail)
+    path = tmp_path / "input.pt"
+    torch.save(record(), path)
+    try:
+        with pytest.raises(SystemExit) as exc:
+            main([str(path), "--plot"])
+        output = path.with_stem("input_filtered")
+        assert exc.value.code and output.exists()
+        error = capsys.readouterr().err
+        assert str(output) in error and "display unavailable" in error
+    finally:
+        plt.close("all")
