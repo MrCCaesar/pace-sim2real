@@ -19,6 +19,7 @@
 **/*.egg-info/
 **/__pycache__/
 **/.pytest_cache/
+**/.ruff_cache/
 **/*.pyc
 **/*.pb
 
@@ -36,6 +37,7 @@ docker/.container.cfg
 .codex
 
 # Outputs
+/imgui.ini
 **/output/*
 **/outputs/*
 **/videos/*
