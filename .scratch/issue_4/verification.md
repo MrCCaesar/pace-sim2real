@@ -321,3 +321,78 @@ ruff format --check scripts/pace/data_collection.py src/pace_sim2real/utils/fit_
 pytest **126 passed**（110.11 s），4 条既有 cmaes 除零告警。Pyright 为 0 错误、0 警告，Ruff 检查与格式通过。补充探针及其日志在同一临时目录，分别为 `check_reordered.py` / `supplement.log` 和 `check_plots.py` / `plots.log`。
 
 **证据边界。** 本轮从实施阶段保留的 ANYmal / Isaac Sim PhysX 单一 dt 结果及回放文件独立复算，61 项参数、12 帧、三字段输出，位置最大绝对差为 0 rad。本轮未重新启动 PhysX。独立预测结果为仿真数据；人工 GUI 体验及实机预测质量由用户验收。
+
+## CR4 Verify · #17–#21 · 任意关节组合
+
+用户批准进入 Verify。基点 `6a1d8c9`，验证对象为当前工作区。Issue #4 与 #17–#21 的正文及评论已回读，验收依据为已批准的 CR4 规格、接口、ADR 0011–0013 和子工单。实际测试使用 X5、Newton MJWarp、CUDA、2 个环境、无查看器，仿真串行执行。启动时约有 17 GiB 可用内存和 22,625 MiB 可用显存。软件复现误差与独立工况预测误差单独统计。
+
+### 运行方法与证据
+
+以下命令从项目根目录运行。临时证据目录为 `/tmp/pace-cr4-verify.p5l4Rpi6`，含运行日志、临时探针、七个 v3 结果、事件和轨迹文件。探针只在验证进程中读取运行状态。
+
+```bash
+EVIDENCE=/tmp/pace-cr4-verify.p5l4Rpi6
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
+export PACE_RUN_REPLAY_INTEGRATION=1 PACE_RUN_SUBSET_INTEGRATION=1
+.venv/bin/python -m pytest -q --tb=short -k 'not test_x5_subset_fit_and_replay and not test_x5_short_fit_replays'
+.venv/bin/python -m pytest -q --tb=short --basetemp="$EVIDENCE/sim" tests/test_fit_replay.py -k 'test_x5_subset_fit_and_replay or test_x5_short_fit_replays'
+.venv/bin/python "$EVIDENCE/all_subsets.py" "$PWD"
+```
+
+### 子工单验收证据
+
+| 工单 | 已核对的行为 |
+| --- | --- |
+| #17 | 穷举 X5 的 65,535 个非空子集，每组内反序排列，用各不相同的界限和尺度逐列核对三项机械量、仅位置偏置、共享延迟和可选 PhysX 摩擦比例。全部通过。常规契约测试另覆盖 `None`、`[]`、声明与数据不符、缺字段、时钟和非有限输入。 |
+| #18 | X5 默认完整机体上采用四个逐腿驱动组。七种 v3 场景分别为四份单腿、单轮、跨腿混合、单位置。部分通道参数和组内默认偏置通过实际仿真读回；跨腿两代的两环境候选延迟依次为 [6,4]、[4,6] 步。检查了全部关节的惯量、黏性和干摩擦、四个驱动组的延迟缓冲及各通道偏置。 |
+| #19 | 对七份 v3 文件独立复算评分与原单位 RMSE，逐项检查两代 TensorBoard 直方图样本数、均值和最佳值标签，核对获胜代的参数与记录、代 0 均值与快照。离线图的关节标题、单位、图例、时间及期望/实测/预测三条曲线与文件逐点相符。纯速度记录有 4 项参数、纯位置单关节有 5 项，各自只报告有效误差。 |
+| #20 | 同集合组内乱序的数据按本次文件列序回放。在一条有独立仿真测量值的 20 帧扫频上，将其余三轮保持目标从 0.4 改为 0.7 rad/s，并反转位置列序。检查到每个变动轮的名称、原值、新值和单位，初态、全部 16 个动作列逐步正确。离线复算位置 RMSE 为 0 rad，速度 RMSE 为 2.2367431e-8 rad/s，与终端一致。此处参考测量由同一候选在原保持工况仿真生成。 |
+| #21 | 无文件回放用记录的关节名对 FL 生成 2–4 Hz 扫频。20 步的三路位置和一路轮速逐点符合独立计算的中心、幅度和方向，其他 12 路均取实际任务保持目标。非对称与仅速度回放通过；无对应系数、输出保护及文件与显式扫频参数互斥均有负例。 |
+
+```bash
+.venv/bin/python "$EVIDENCE/artifacts.py" "$PWD"
+bash "$EVIDENCE/supplement.sh" "$EVIDENCE" "$PWD"
+.venv/bin/python "$EVIDENCE/trajectory_check.py"
+uvx --offline pyright --pythonpath .venv/bin/python scripts/pace/{data_collection,fit,plot_trajectory}.py src/pace_sim2real/{optim/cma_es,utils/{subset_control,collection_contracts,fit_replay}}.py
+.venv/bin/ruff check scripts/pace/{data_collection,fit,plot_trajectory}.py src/pace_sim2real/{optim/cma_es,utils/{subset_control,collection_contracts,fit_replay}}.py tests/test_fit_replay.py
+git diff --check
+```
+
+定向 Pyright 返回 0 错误、0 警告，定向 Ruff 通过。两组互斥的 pytest 命令合计 147 项通过、3 项失败。七个子集集成用例均通过。原生 MuJoCo 两项失败来自输出路径的工作区既有修改；在隔离目录用基点原脚本、原测试和同一机器人资产复跑，两项通过。另一个全量 v2 用例只生成 `chirp_data.pt`，当前 X5 任务配置读取 `lab_0.1_10Hz_kp600_kd10_chirp_data.pt`，因缺文件在拟合入口退出。
+
+在隔离测试数据目录中增加一个从任务配置文件名到 `chirp_data.pt` 的符号链接，原样运行同一个全量 v2 用例，通过。32 帧、61 个参数，同轨迹位置和轮速最大绝对差均为 0；另一条独立全量轨迹的预测 RMSE 分别为 0.018491455 rad 和 1.6192978 rad/s。该结果亦通过离线加载和绘图，位置、速度分别有 12、4 幅关节子图。当前工作区原样运行的三项失败仍单列报告。
+
+对原生 MuJoCo 进行隔离归因时，使用 `git archive HEAD scripts/pace config tests/test_mujoco_collection.py`、挂载当前 `src` 资产，再运行 `pytest -q tests/test_mujoco_collection.py -k 'cli_saves_short_run or plot_failure_happens_after_save'`。实施基点为 `6a1d8c9`。两项断言均要求旧路径 `data/x5_sim/chirp_data.pt`，工作区的原生入口写入 `data/Isaac-Pace-Sevnce-X5-v0/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt`。
+
+对 PhysX 的检查覆盖参数布局及解码。执行 `.venv/bin/python "$EVIDENCE/ratio.py" "$PWD"`，使用四份 v3 记录的关节与参数构成单腿、单轮、跨腿和单位置输入，在 CPU 上追加辨识用的摩擦比例并打乱参数顺序，逐关节核对动摩擦等于静摩擦乘对应比例。实际部分关节仿真采用 Newton MJWarp。所有轨迹来自合成输入或仿真采样，真实机器人跟踪精度与碰撞模型保留给实机验收。
+
+### 四条腿独立采样、拟合与回放
+
+命令为 `OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 MPLBACKEND=Agg .venv/bin/python "$EVIDENCE/same_hold.py" "$PWD"`。每条腿分别用自己的候选参数在四驱动组 X5 上施加 2–4 Hz 扫频，保存 20 帧仿真测量，其他三条腿维持相同保持工况。随后用本腿的测量重新拟合两代，对新最佳候选做同轨迹回放。每份记录均有三列位置、一列速度、16 个辨识参数。表中比较相同候选、相同输入的步前响应，阈值分别为 0.0001 rad 和 0.001 rad/s。
+
+| 独立记录 | 位置最大绝对差（rad） | 轮速最大绝对差（rad/s） |
+| --- | ---: | ---: |
+| FL | 0 | 5.9604645e-08 |
+| FR | 1.8626451e-09 | 2.3841858e-07 |
+| RL | 0 | 1.1920929e-07 |
+| RR | 1.8626451e-09 | 1.1920929e-07 |
+
+**结论。** #17–#21 的 CR4 软件验收通过。工作区全量回归仍有三项文件路径断言或输入配置失败，其归因与隔离复跑结果见上。Verify 交付仅更新本地阶段文档。
+
+### Verify 后续 · 统一采集和拟合的文件名
+
+用户选定按来源使用稳定文件名。Isaac Lab 固定采集与默认拟合共用 `data/<规范化任务名>/chirp_data.pt`，X5 原生入口写入同一任务目录的 `mujoco_chirp_data.pt`。拟合其他文件仍可覆盖 `env.sim2real.data_dir`。两种采集文件均纳入 X5 回放的输出保护。README、使用示例和原生回归断言已同步。
+
+全套回归采用临时目录，启用原有及子集回放测试。补充检查在单独的 `PACE_ROOT` 采集 0.04 秒 MuJoCo 轨迹，并用明确指定的原生文件名运行一代 Newton 拟合。命令如下。
+
+```bash
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
+PACE_RUN_REPLAY_INTEGRATION=1 PACE_RUN_SUBSET_INTEGRATION=1 .venv/bin/python -m pytest -q --tb=short
+# 以下命令使用独立临时目录作为 PACE_ROOT 与工作目录，REPO 为源码绝对路径
+"$REPO/.venv/bin/python" "$REPO/scripts/pace/data_collection_mujoco.py" --duration .04 --no-visualize
+"$REPO/.venv/bin/python" "$REPO/scripts/pace/fit.py" --task Isaac-Pace-Sevnce-X5-v0 --num_envs 2 --visualizer none env.sim2real.data_dir=mujoco_chirp_data.pt env.sim2real.cmaes.max_iteration=1
+```
+
+结果：全套 150 项通过（317.43 秒，4 条既有 CMA 警告），含此前失败的三项。原生输出/绘图两项补测通过。临时目录下的 16 帧 X5 原生采集成功，以任务相对文件名拟合后，结果内的时间、实测与期望共五个张量和原文件一致。两种任务配置的默认输入均为 chirp_data.pt。六份原有实验文件的 SHA-256 检验通过。
+
+本次涉及的 Python 文件通过 Ruff，采集、拟合入口及路径模块的 Pyright 检查为零错误。将共享任务配置纳入 Pyright 时有 5 项既有 Isaac Lab 类型诊断；用相同环境核对基点该文件为 6 项。

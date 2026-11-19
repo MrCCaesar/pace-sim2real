@@ -1,6 +1,18 @@
 # Issue #4 — Status
 
-Current stage: CR3 Verify 已完成 — 提交 d8e0480 的 A1–A5 及 Q7 软件验收通过。隔离源码全量测试 126 项通过，实际乱序参数回放、独立扫频、超限播放与绘图数据已复核。证据、命令及 PhysX 复算范围见 verification.md 的 CR3 Verify。
+Current stage: CR4 Verify 及文件名约定后续修订已完成。#17–#21 软件验收通过，原有三项路径差异已解决。两类集成用例同时启用后，全套 150 项通过。Isaac Lab 默认采集和拟合使用 chirp_data.pt；X5 原生 MuJoCo 采集使用 mujoco_chirp_data.pt，已验证直接指定该文件拟合。
+
+本地提交记录：生成文件清理 `5ad5f80`，X5 腿关节增益调整 `8a5fdf5`，原生 MuJoCo 任务输出路径及回归 `25fc9ba`，部分关节拟合与回放 `e1eaa3e`。提交前运行默认 pytest：144 项通过，8 项按需启用的 X5 集成测试跳过，4 条已有 CMA 警告。
+
+原生 MuJoCo 采集路径测试已跟随当前 `--task` 行为更新，覆盖默认 X5、自定义任务目录及显式空任务名直接写入 `data/`。运行 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -m pytest -q --tb=short tests/test_mujoco_collection.py tests/test_fit_replay.py::test_cli_protects_inputs_before_simulation`，75 项通过。
+
+穷举 X5 的全部 65,535 个非空关节子集，七种短程仿真和四份独立逐腿采样的再拟合及回放通过。全量 v2 对齐测试输入文件名后复现通过。证据、逐腿误差、测试边界和失败归因见 [CR4 Verify](verification.md)。
+
+当前实现支持任意非空位置/速度关节组合，含 v3 配对结果、TensorBoard、离线图、原轨迹复现和子集扫频。实施证据、运行条件和逐腿误差见 plan.md 的“CR4 Implement 交接”。
+
+Implement 阶段的默认测试命令为 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -m pytest -q --tb=short`，140 项通过、2 项失败、8 项显式跳过。两个失败来自本轮前已有的原生 MuJoCo 输出路径变更与旧断言。7 个可选 X5 子集场景均已分批显式启动并通过，另有使用实际任务配置和显式数据文件名的全量 v2 短程复现。实际部分关节仿真使用 Newton，PhysX 比例由参数契约测试检查。本段记录 Implement 阶段的数据。
+
+Previous stage: CR3 Verify 已完成 — 提交 d8e0480 的 A1–A5 及 Q7 软件验收通过。隔离源码全量测试 126 项通过，实际乱序参数回放、独立扫频、超限播放与绘图数据已复核。证据、命令及 PhysX 复算范围见 verification.md 的 CR3 Verify。
 
 交付记录：根 README 已改为中文，列出 Isaac Lab 3.0 依赖、两种采集方式、拟合、回放及诊断配置。文档验证覆盖四个入口的命令行帮助、两个任务的配置解析及原生 MuJoCo 的 20 帧采集。本次交付对应回放子任务 #14、#15、#16；软件验收记录见 verification.md。
 

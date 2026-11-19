@@ -249,3 +249,46 @@ Durable run records, samples and probe hashes: `cr2-research-results.json` → `
 - 建议兼容上述两种有证据的配对 v2 表示：旧双时钟必须相等且匹配任务，历史后端/求解器只按可核实的标识归一化。优先保留候选原物理语义；遇到跨后端、求解器无法确认、时步/延迟模式冲突或无法证明配对的旧均值时，建议说明差异并停止。支持范围与拒绝条件待批准。 [设置写入](../../scripts/pace/fit.py#L103) · [后端写入差异](../../src/pace_sim2real/optim/cma_es.py#L377)
 - 建议文件参考沿用任务声明的列顺序与时间解释；指定独立实测时采用其首样本，无实测的扫频沿用采集初态。另存回放时采用独立输出路径；具体选项、文件内容以及训练同轨迹时如何标示留给 Specify。安装版 `isaaclab_tasks/utils/hydra.py:802–812` 已处理带常量的可选值之后紧跟 `key=value` 的情形；后续可覆盖裸 `--fit_result physics=...`，确认预设仍然生效。 [采集命令行](../../scripts/pace/data_collection.py#L341) · [原始文件契约](../../adr/0009-reference-semantics-in-fit-config.md)
 - 后续若需要实验证据，可先经批准用已有配对记录做有界同轨迹回放，再用另一条有实测的轨迹检查预测 RMSE，另覆盖非零首轮速、纯腿无轮项与最新运行缺文件。两种现有结果均来自 Newton，PhysX 和独立预测质量没有本轮执行证据；本阶段未选择最终接口或验收阈值。
+
+## CR4 · 任意记录关节子集的拟合与回放 · Research / Draft（2026-11-19）
+
+**范围与证据。** Q1–Q6 及后续澄清要求同一任务支持其受控关节中的任意非空组合。位置或速度跟踪类型由任务现有分组决定。单关节、非对称组合、跨组组合和不按任务顺序排列的文件均在范围内。X5 的四个输入是例子。以下是当前工作树（HEAD `6a1d8c9`，保留本地配置改动）与已安装 Isaac Lab 3.0.0 源码的只读研究，方案和实验均待审批。[需求记录](requirements.md#cr4-explore-结论q1q6-已确认) · [Issue #4](https://github.com/MrCCaesar/pace-sim2real/issues/4)
+
+### 已确认的事实与边界
+
+1. **同一套分组现在兼任三种职责。** `resolve_joint_groups` 要求位置组非空，并兼容只声明 `joint_order` 的历史纯位置任务。`resolve_action_mapping` 验证每个动作项恰好覆盖任务分组，分开返回 articulation 关节 ID 和 ActionManager 列。`load_reference_data` 又要求配置声明的文件列序等于这套分组，强制存在两项位置字段。直接把任务分组缩成文件宽度，会在完整环境上触发覆盖错误。拟合和回放还各自检查执行器的每列必须在所给关节列表中恰好出现一次。[分组与动作映射](../../src/pace_sim2real/utils/collection_contracts.py#L46) · [文件加载](../../src/pace_sim2real/utils/collection_contracts.py#L127) · [拟合执行器覆盖](../../src/pace_sim2real/optim/cma_es.py#L380) · [回放执行器覆盖](../../scripts/pace/data_collection.py#L170)
+2. **文件能验证结构，列归属依赖用户声明。** 位置组用 `dof_pos/des_dof_pos`（rad），速度组用 `dof_vel/des_dof_vel`（rad/s），共用 `time`。现有加载器会检查字段成对、有限值、各列样本数和时间间隔。若两个等宽文件互换同类关节，如髋和大腿，数值及形状本身无法证实操作者给出的名称；即使只有一列也一样。独立轨迹应逐组核对与拟合结果的**名称集合**，再按该文件声明的顺序重排。只改变顺序可以精确对齐，改变成员或跟踪类型应报错。用户已选择配置声明，结果保存解析后的名称有助于复核。现有 X5 数据目录内 6 个文件经只读张量形状检查均为 8000 帧、12 个位置和 4 个速度通道。裁列可以检查映射；若原采集中其余关节同时扫频，裁列后的数据不能证明在恒定保持工况下的物理响应。[数据契约](../../src/pace_sim2real/utils/collection_contracts.py#L133) · [ADR 0009](../../adr/0009-reference-semantics-in-fit-config.md) · [X5 数据目录](../../data/Isaac-Pace-Sevnce-X5-v0)
+3. **纯速度需要贯通整个流程。** 拟合入口从位置首帧取初态，CMA 构造和 `tell` 从位置数据确定宽度或批次；`evolve` 无条件用位置均方初始化分数和权重。位置宽度为零时会得到非有限评分。最佳结果、终端、TensorBoard 还会无条件生成位置响应或位置误差。离线重算和画图已按非空分组迭代，但读取器仍要求至少一个位置关节，回放入口也总是访问、输出位置数据。数据可以自然地只提供有效组的字段对，拟合损失仅对有效组按现有尺度求均方、按有效权重归一化。缺失组不产生误差、偏置或图，不应将其当作零误差。[拟合入口](../../scripts/pace/fit.py#L211) · [CMA 初始化](../../src/pace_sim2real/optim/cma_es.py#L56) · [评分](../../src/pace_sim2real/optim/cma_es.py#L181) · [日志及配对结果](../../src/pace_sim2real/optim/cma_es.py#L263) · [离线读取和绘图](../../scripts/pace/plot_trajectory.py#L102) · [回放](../../scripts/pace/data_collection.py#L131) · [ADR 0007](../../adr/0007-scaled-mixed-response-objective.md)
+4. **逐关节写入和整组延迟的粒度不同。** 已安装的 Newton、Isaac Sim PhysX、OVPhysX 均提供带 `joint_ids` 的转子惯量和摩擦写入接口（黏性摩擦通过同一摩擦接口写）。Newton 只使用单一干摩擦量，PhysX 可按原配置使用摩擦比例。PACE 的偏置更新要求完整的「环境数 × 此执行器关节数」矩阵，延迟按环境设置，作用于该执行器缓冲的所有通道；复位会清空历史。当前 X5 的一个 PACE 驱动覆盖 16 个关节，初始编码器偏置为零。旧拟合从全零构造偏置矩阵，固定采集路径还另有 0.05 rad 等常量，两者均不能代表任意任务加载后的未选关节基线。[Newton 写入](https://github.com/isaac-sim/IsaacLab/blob/ae63302486bb92fc865f1fd8449b91a53728184c/source/isaaclab_newton/isaaclab_newton/assets/articulation/articulation.py#L1973-L2064) · [Isaac Sim PhysX 写入](https://github.com/isaac-sim/IsaacLab/blob/ae63302486bb92fc865f1fd8449b91a53728184c/source/isaaclab_physx/isaaclab_physx/assets/articulation/articulation.py#L1786-L1905) · [OVPhysX 写入](https://github.com/isaac-sim/IsaacLab/blob/ae63302486bb92fc865f1fd8449b91a53728184c/source/isaaclab_ov/isaaclab_ov/assets/articulation/articulation.py#L1850-L1985) · [PACE 驱动](../../src/pace_sim2real/utils/pace_actuator.py#L40) · [X5 驱动](../../src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py#L18) · [固定采集常量](../../src/pace_sim2real/utils/fit_replay.py#L26)
+
+### 可行方案、代价与建议（Proposed）
+
+| 思路 | 从采集工况到结果的影响 |
+| --- | --- |
+| 完整任务分组控制机器人，另按文件声明选出辨识关节 | 保留完整动作覆盖；已记录列填入对应动作列，其余列每帧填入配置的恒定目标。可在步循环外一次打包，按选中名称提取响应、参数边界和尺度。每个关节的机械参数只写选中 ID；在完整驱动基线偏置上覆盖选中的位置通道，并向约定的完整执行器组写共享延迟。推荐此方向，改动可集中在现有配置、契约、拟合器及结果读写入口。[动作预打包](../../src/pace_sim2real/utils/collection_contracts.py#L100) · [拟合循环](../../scripts/pace/fit.py#L222) · [参数写入](../../src/pace_sim2real/optim/cma_es.py#L399) |
+| 保留完整参数向量，将未记录变量固定并对误差加掩码 | 现有 CMA 能剔除上下界相等的变量。要符合 Q1/Q4，仍需获得每个环境加载后的精确默认值，避免全量回写改变现状，另行过滤日志、参数名、响应和回放。给未观测通道补零或加零权重也会污染组均值、分母或初态。此路线可实现，但需要维护更多完整向量与子集间的转换。[固定边界与参数恢复](../../src/pace_sim2real/optim/cma_es.py#L129) · [评分](../../src/pace_sim2real/optim/cma_es.py#L221) · [结果写入](../../src/pace_sim2real/optim/cma_es.py#L319) |
+| 按实验拆分任务、动作或执行器 | 简单缩减覆盖会遗漏未记录关节的控制，拆开原驱动也会改变延迟作用范围；为任意组合复制任务没有必要，且不满足本次复用同一任务的要求。[覆盖校验](../../src/pace_sim2real/utils/collection_contracts.py#L65) · [X5 动作与分组](../../src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py#L43) · [Q2、Q5](requirements.md#cr4-explore-结论q1q6-已确认) |
+
+按推荐方向，需要区分文件的组内列、完整任务中按跟踪类型排列的关节、articulation ID、动作列、执行器组内列和结果参数名。可在启动时按名称解析，将重复、不存在、错组和保持目标覆盖缺漏或与已记录关节重叠的声明在写参数前报告。一次排序不能同时用作上述所有索引。独立验证文件可以采用与训练文件不同的组内顺序，误差计算、初态、命令及绘图必须采取同一对齐。现有命名参数读取器已能按种类和关节名重排。[动作/测量索引](../../src/pace_sim2real/utils/collection_contracts.py#L65) · [命名参数](../../src/pace_sim2real/utils/fit_replay.py#L106) · [动作顺序回归样例](../../tests/test_mixed_collection_fit.py#L37)
+
+**参数维度。** 设已记录位置关节数为 P、速度关节数为 V，J=P+V>0。沿用现有布局，基础向量宽度为 3J+P+1，启用 PhysX 独立摩擦比例时再加 J。分别代表三种机械量、位置偏置和一个共享延迟。等值上下界会继续缩减实际参与搜索的自由变量数。下表是举例，不限制任务、名称或组合。全量参数边界须按“参数种类、任务关节名”逐块抽取，不能简单截取前若干行；已有列表形式的误差尺度也需按原关节名投影，标量可继续广播。先按后端处理完整组的比例块，再提取选中行，可避免延迟行错位。[参数布局及活动维度](../../src/pace_sim2real/optim/cma_es.py#L84) · [任务对摩擦比例的处理](../../src/pace_sim2real/tasks/manager_based/pace/pace_sim2real_env_cfg.py#L206) · [X5 边界](../../src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py#L73) · [ADR 0008](../../adr/0008-canonical-joint-groups-and-layout.md)
+
+| 记录关节示例 | P | V | 基础参数数 | 启用比例时 |
+| --- | ---: | ---: | ---: | ---: |
+| X5 四髋或四大腿（两种不同文件） | 4 | 0 | 17 | 21 |
+| X5 四小腿和四轮 | 4 | 4 | 29 | 37 |
+| X5 四轮 | 0 | 4 | 13 | 17 |
+| 任一位置关节 / 任一速度关节 | 1 / 0 | 0 / 1 | 5 / 4 | 6 / 5 |
+| 任意一个位置关节和两个速度关节 | 1 | 2 | 11 | 14 |
+
+**回放及版本。** 当前配对 v2 记录有组名、具名参数、候选身份和同一次评估的响应。回放仅接受当前单一 `settings.dt` 形式并核验后端、求解器、偏置和延迟模式，旧双时步 v2 已由 CR3 明确排除。对既有有效全量结果，可沿用原全量语义。对子集结果，一条路径是继续使用 v2 并为新写入结果增加可区分范围的设置；另一条路径是升级子集记录版本并保留独立的现行 v2 读路径。前者改动较少，但旧离线读取器可能将部分新结果当作完整记录，旧回放读取器则要求与任务分组严格相等；后者明确隔离语义，需同步更新写入器和所有读取器。两种方案都应只报告选中关节的配对参数、响应和有效组指标，并记录足以核对的完整控制范围、恒定目标、列声明和延迟作用范围。新记录与回放任务工况冲突时的处理、版本号及字段留待 Specify。已有不配对均值不能用作物理回放输入。[配对结果](../../src/pace_sim2real/optim/cma_es.py#L319) · [回放兼容性](../../src/pace_sim2real/utils/fit_replay.py#L35) · [绘图读取器](../../scripts/pace/plot_trajectory.py#L69) · [CR3 已批准契约](spec.md#q4q6--已确认) · [ADR 0010](../../adr/0010-paired-evaluated-fit-results.md)
+
+**回放入口范围。** 文件轨迹已提供被记录关节的期望值，可同拟合复用完整动作组装、选中响应及名称核对。生成扫频路径则写死 12 个位置系数和 4 个速度系数，直接以选中数调用会造成形状错误，某些可广播形状也无法保证名称对应。对已有支持的完整任务，可按其原有通道生成后抽取选中列，再对其余列发保持目标。若还要求为任意新任务生成扫频，必须先有该任务逐关节的幅度、中心与方向依据，不能按 X5 关节名猜测。是否扩展扫频配置与任意子集文件回放的可行性是两个不同问题。[生成与文件分支](../../scripts/pace/data_collection.py#L125) · [扫频系数](../../scripts/pace/data_collection.py#L284) · [采集输出](../../scripts/pace/data_collection.py#L398)
+
+### 假设、开放决策与可选检验
+
+- **工况与初态。** 未记录关节的恒定目标在整个运行期间都应发送。位置控制反馈使用 q−b，有非零默认偏置时，同一数值用作物理初始角度或编码器坐标目标会导致不同的启动误差。速度保持也可能非零。应明确未记录关节的首帧物理状态从任务初态取得，还是依保持工况建立，以及用什么工况核对独立回放。已记录通道沿用文件首帧实测位置加候选偏置、首帧实测速率。仿真能保存默认参数并不证明真实采集工况和仿真完全吻合。[现有初态](../../src/pace_sim2real/optim/cma_es.py#L410) · [偏置物理语义](../../adr/0005-unified-feedback-encoder-bias.md)
+- **多执行器。** X5 的单组覆盖边界已经明确。若任务含多个驱动，共享候选必须覆盖所涉执行器的所有关节；若某个驱动完全没有授予辨识的通道，这个驱动是否也使用同一延迟，需明确再实现。两种规则在 X5 上相同，单组测试无法判别。需在写入前校验适用组的覆盖、模式和延迟容量，并在每轮从同一份任务基线组装偏置，防止候选或轮次间串值。[按组写入](../../src/pace_sim2real/optim/cma_es.py#L380) · [延迟 API](../../src/pace_sim2real/utils/pace_actuator.py#L79)
+- **可选检验，未执行。** 先用 CPU 合成名称和可手算的互异数值，覆盖单位置、单速度、非对称乱序混合、原有纯位置/全混合、两组均空和错组/重复声明；分别核对命令、参数行、误差、事件标签、配对结果与独立回放重排。若需要确认后端行为，可经另行批准后逐个后端串行运行无窗口、2 个环境、短轨迹和 1 代；为未选关节设置非零且可区分的任务默认值，对照所选参数生效、未选参数保持、整组延迟及各状态/命令。短程结果只能检验软件行为，不能验证物理辨识质量。现有测试提供全组回归参照。[已有误差与尺度测试](../../tests/test_mixed_collection_fit.py#L171) · [已有执行器覆盖测试](../../tests/test_mixed_collection_fit.py#L593) · [已有回放测试](../../tests/test_fit_replay.py#L166)
+
+本阶段未运行 CR4 实验、仿真或拟合。具体配置语法、版本与兼容策略、初态及多驱动约定留给获准后的 Specify。

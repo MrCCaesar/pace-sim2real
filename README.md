@@ -1,11 +1,11 @@
 # PACE 机器人关节动力学辨识
 
-PACE 根据一段期望轨迹和实测响应，用 CMA-ES 估计关节惯量、阻尼、摩擦、编码器偏置和执行器延迟。可以先用已知参数生成参考数据，检查拟合能否恢复跟踪效果，再换一段轨迹验证估计结果。
+PACE 用 CMA-ES 从期望轨迹和实测响应中辨识关节惯量、阻尼、摩擦、位置编码器偏置和执行器延迟。可以拟合整机，也可以只记录一条腿、一个轮或跨腿的关节组合。辨识后，可用原记录复现最佳候选的响应，再用另一条实测轨迹评估预测误差。
 
 | 要完成的工作 | 入口 | 结果 |
 | --- | --- | --- |
 | 用固定参数采集腿部位置和轮速 | `scripts/pace/data_collection.py --task 任务名` | `data/<任务名>/chirp_data.pt` |
-| 用原生 MuJoCo 采集 X5 传感器数据 | `scripts/pace/data_collection_mujoco.py` | `data/x5_sim/chirp_data.pt` |
+| 用原生 MuJoCo 采集 X5 传感器数据 | `scripts/pace/data_collection_mujoco.py` | `data/Isaac-Pace-Sevnce-X5-v0/mujoco_chirp_data.pt` |
 | 从采集或实机记录中辨识参数 | `scripts/pace/fit.py --task 任务名` | 运行目录中的 `best_result.pt` 和优化日志 |
 | 把估计参数写回仿真，验证其他轨迹 | `scripts/pace/data_collection.py --task 任务名 --fit_result` | 仿真响应，可绘图或另存 |
 | 查看已完成的拟合 | `scripts/pace/plot_trajectory.py`、TensorBoard | 逐关节响应、评分、参数分布和均值 |
@@ -34,17 +34,26 @@ cat ../IsaacLab/VERSION
 
 ## 快速跑通采集、拟合和回放
 
-以下命令使用同一任务、1 秒参考数据和最多 3 代优化，适合检查整个流程。第一次采集会写入该任务的默认数据文件，重复运行会覆盖它。已有实机记录时，可直接从拟合步骤开始，并用 `env.sim2real.data_dir` 指定记录文件。
+以下示例用 X5 采集 1 秒数据，在两个并行环境中拟合最多 3 代，再回放同一条轨迹。要使用纯腿的 ANYmal D，可将首行任务名改为 `Isaac-Pace-Anymal-D-v0`。
 
 ```bash
-task=Isaac-Pace-Anymal-D-v0
+task=Isaac-Pace-Sevnce-X5-v0
 uv run python scripts/pace/data_collection.py --task "$task" --visualizer none --duration 1
 uv run python scripts/pace/fit.py --task "$task" --num_envs 2 env.sim2real.cmaes.max_iteration=3
 uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visualizer none \
   --trajectory_file "data/$task/chirp_data.pt" --output "data/$task/replay.pt"
 ```
 
-最后一条命令会按参考记录的指令重新仿真，并打印预测与参考测量之间的均方根误差（RMSE）。将首行任务名改为 `Isaac-Pace-Sevnce-X5-v0` 即可对 X5 同时验证腿部位置和轮速。
+第一条命令写入 `data/$task/chirp_data.pt`，第二条默认读取该文件。第三条读取本次拟合的最佳候选，打印预测与实测之间的位置和轮速均方根误差（RMSE），并把预测轨迹另存为 `replay.pt`。
+
+已有采集或实机记录时，可以直接从拟合开始。选择文件时注意两个入口的路径规则。
+
+| 入口 | 如何指定参考记录 | 路径从哪里解析 |
+| --- | --- | --- |
+| 拟合 | `env.sim2real.data_dir=实验文件.pt` | 相对路径从 `data/<任务名>/` 解析。设置 `PACE_ROOT` 可更换数据根目录 |
+| 文件回放 | `--trajectory_file data/<任务名>/实验文件.pt` | 相对路径从运行命令时的工作目录解析 |
+
+两者都接受绝对路径。同一来源再次成功采集时会替换该来源的默认文件；需长期保存的实验可另用文件名归档。
 
 ## 使用 Isaac Lab 采集扫频数据
 
@@ -62,12 +71,15 @@ uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visu
 
 ## 使用原生 MuJoCo 采集 X5
 
-该入口直接加载 MuJoCo 模型，可与 Isaac Lab 的 X5 拟合配合使用。命令行参数优先于 TOML 中的同名设置。[采集入口](scripts/pace/data_collection_mujoco.py) · [默认配置](config/x5_collection.toml)
+原生 MuJoCo 将 X5 传感器记录写入任务目录下的 `mujoco_chirp_data.pt`。下面用这份记录在 Isaac Lab 中拟合，再按原指令回放。采集参数可在 TOML 中设置，命令行的同名参数优先。[采集入口](scripts/pace/data_collection_mujoco.py) · [默认配置](config/x5_collection.toml)
 
 ```bash
-uv run python scripts/pace/data_collection_mujoco.py --config config/x5_collection.toml --duration 2 --visualize
-uv run python scripts/pace/fit.py --task Isaac-Pace-Sevnce-X5-v0 \
-  env.sim2real.data_dir="$PWD/data/x5_sim/chirp_data.pt"
+task=Isaac-Pace-Sevnce-X5-v0
+uv run python scripts/pace/data_collection_mujoco.py --config config/x5_collection.toml --duration 1
+uv run python scripts/pace/fit.py --task "$task" --num_envs 2 \
+  env.sim2real.data_dir=mujoco_chirp_data.pt env.sim2real.cmaes.max_iteration=3
+uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visualizer none \
+  --trajectory_file "data/$task/mujoco_chirp_data.pt" --output "data/$task/mujoco_replay.pt"
 ```
 
 | 设置位置 | 参数 | 含义与默认值 |
@@ -82,20 +94,21 @@ uv run python scripts/pace/fit.py --task Isaac-Pace-Sevnce-X5-v0 \
 
 ## 参考数据与 CMA-ES 拟合
 
-两种采集器写出相同格式的 PyTorch 张量字典。实机数据也按此格式整理。设 `T` 为采样点数，`L` 为腿关节数，`W` 为轮关节数。每一行记录施加本步指令时、推进物理仿真前的状态。
+两种采集器写出相同格式的 PyTorch 张量字典。实机数据也按此格式整理。设 `T` 为采样点数（至少 2 个），`L`、`W` 分别为文件中实际记录的位置列数和速度列数。每一行记录施加本步指令时、推进物理仿真前的状态。
 
 | 字段 | 形状与单位 | 内容 |
 | --- | --- | --- |
 | `time` | `[T]`，秒，双精度 | 两组关节共用的采样时间 |
-| `dof_pos`、`des_dof_pos` | 各 `[T, L]`，rad，单精度 | 腿部测量角度、延迟前的期望角度 |
-| `dof_vel`、`des_dof_vel` | 各 `[T, W]`，rad/s，单精度 | 有轮任务的测量轮速、延迟前的期望轮速。纯腿任务只保存前三个字段 |
+| `dof_pos`、`des_dof_pos` | 各 `[T, L]`，rad，单精度 | 已记录位置关节的测量角度和延迟前的期望角度。仅记录速度时可省略这两个字段 |
+| `dof_vel`、`des_dof_vel` | 各 `[T, W]`，rad/s，单精度 | 已记录速度关节的测量轮速和延迟前的期望轮速。仅记录位置时可省略这两个字段 |
 
 `fit.py` 让每个并行环境评估一组候选参数。`--num_envs` 同时决定种群大小，默认及最小值均为 `2`。默认设备为 `--device cuda`，默认关闭查看器。任务配置可通过 `env.sim2real.字段=值` 覆盖。[共享配置](src/pace_sim2real/tasks/manager_based/pace/pace_sim2real_env_cfg.py) · [ANYmal D 配置](src/pace_sim2real/tasks/manager_based/pace/anymal_pace_env_cfg.py) · [X5 配置](src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py)
 
 | `env.sim2real` 下的字段 | 如何设置 |
 | --- | --- |
-| `data_dir` | 默认 `chirp_data.pt`。相对路径从 `data/<任务名>/` 解析，也接受绝对路径 |
-| `leg_order`、`wheel_order` | 按数据列顺序声明位置和速度关节。纯腿任务也可沿用 `joint_order`。数据文件本身不保存关节名。若额外声明 `reference_leg_order`、`reference_wheel_order`，必须与任务顺序一致 |
+| `data_dir` | 默认 `chirp_data.pt` 读取 Isaac Lab 采集数据。X5 原生 MuJoCo 数据使用 `mujoco_chirp_data.pt`。相对路径从 `data/<任务名>/` 解析，也接受绝对路径 |
+| `leg_order`、`wheel_order` | 声明机器人完整的位置与速度控制分组。纯腿任务也可沿用 `joint_order` |
+| `reference_leg_order`、`reference_wheel_order` | 分别声明文件的位置列和速度列。每组的 `None` 表示按任务组序读取全部关节，`[]` 表示该组无记录，非空列表按文件实际列序写出准确名称。文件本身不保存关节名，两组合计至少一个关节 |
 | `time_mode`、`legacy_sample_dt` | 默认 `strict`。采样间隔须等于 `env.sim.dt`，且 `env.decimation=1`。旧时间列需用 `legacy_index` 并显式给出真实采样间隔，该间隔仍须与仿真一致 |
 | `reference_bias_model`、`reference_delay_mode` | 偏置模型为 `feedback_and_measurement`。旧版仅在测量端减偏置的 MuJoCo 数据需重新采集。延迟默认作用于指令（`command`），也可作用于力矩（`effort`），声明须与执行器配置一致 |
 | `bounds_params` | 每行给出一个参数的上下界。依次放入所有关节的惯量、阻尼、摩擦，仅腿关节的偏置，以及一个共享延迟。各关节块按腿后接轮排序。当前范围依次为 `[0.00001, 1]`、`[0, 7]`、`[0, 0.5]`、`[-0.1, 0.1] rad`、`[0, 10]` 步。上下界相等可固定参数 |
@@ -107,7 +120,7 @@ uv run python scripts/pace/fit.py --task Isaac-Pace-Sevnce-X5-v0 \
 | --- | --- | --- |
 | `max_iteration`、`epsilon` | `200`、`0.01` | 最大代数、同代候选评分相对差距的提前停止阈值 |
 | `sigma` | `0.5` | 归一化参数空间的初始搜索尺度 |
-| `position_error_scale`、`velocity_error_scale` | 各 `1.0` | 可给正标量，也可给逐关节正数列表，长度分别为 `L`、`W`。可用各腿的角度范围和各轮的速度范围归一化 |
+| `position_error_scale`、`velocity_error_scale` | 各 `1.0` | 可给正标量，也可给逐关节正数列表，长度分别为任务完整的位置、速度关节数，拟合按记录名称抽取并重排。可用各腿的角度范围和各轮的速度范围归一化 |
 | `position_weight`、`velocity_weight` | 各 `1.0` | 两组的正权重。每组先对各关节的 `MSE / scale²` 求平均，再按参与组的权重加权平均得到总评分。日志中的 RMSE 仍以 rad、rad/s 表示 |
 | `save_interval`、`save_optimization_process` | `10`、`false` | 每隔指定代数保存分布均值，设为 `0` 可关闭均值快照。开启过程保存后可离线绘制评分曲线 |
 
@@ -119,9 +132,33 @@ uv run python scripts/pace/fit.py --task Isaac-Pace-Sevnce-X5-v0 --num_envs 2 \
   env.sim2real.cmaes.save_optimization_process=true
 ```
 
+### 拟合部分关节
+
+假设已有 `data/Isaac-Pace-Sevnce-X5-v0/fl.pt`，位置列依次为左前髋、大腿、小腿，速度列为左前轮。保留任务的完整控制分组，在 Bash 中用同一组列名拟合并回放这份文件。
+
+```bash
+task=Isaac-Pace-Sevnce-X5-v0
+groups=('env.sim2real.reference_leg_order=["FL_hip_joint","FL_thigh_joint","FL_calf_joint"]'
+        'env.sim2real.reference_wheel_order=["FL_foot_joint"]')
+uv run python scripts/pace/fit.py --task "$task" "${groups[@]}" env.sim2real.data_dir=fl.pt
+uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visualizer none \
+  --trajectory_file "data/$task/fl.pt" "${groups[@]}"
+```
+
+若 `wheels.pt` 只记录四个轮速，且速度列按任务的 `wheel_order` 排列，只需声明位置组为空。文件包含 `time`、`dof_vel`、`des_dof_vel`，拟合只计算速度误差。
+
+```bash
+uv run python scripts/pace/fit.py --task Isaac-Pace-Sevnce-X5-v0 \
+  'env.sim2real.reference_leg_order=[]' env.sim2real.data_dir=wheels.pt
+```
+
+独立验证轨迹按自身列序声明。位置组与速度组的成员须分别与拟合结果一致，组内可以重排。
+
+未记录关节的保持目标取自任务的 `ArticulationCfg.init_state`。位置关节保持默认物理角减默认编码器偏置，首速为零。速度关节保持默认速度，从默认角度启动。其机械参数沿用任务默认值。每个包含已记录关节的执行器组整体使用同一个候选延迟。例如将四条腿配置为四个驱动组时，单腿记录只更新对应组的延迟。改变保持工况后，回放按关节报告旧值、新值和单位，使用新目标运行。
+
 ## 用拟合结果验证其他轨迹
 
-`data_collection.py --fit_result` 会把最佳候选的物理参数、腿编码器偏置和共享延迟写入仿真。可以重新生成扫频，观察新指令下的响应，也可以传入另一份实测记录，量化预测误差。[回放参数校验](src/pace_sim2real/utils/fit_replay.py)
+`data_collection.py --fit_result` 会把最佳候选的物理参数、腿编码器偏置和共享延迟写入仿真。省略轨迹文件时，对已辨识关节生成新扫频，可观察指令跟踪效果。若关节缺少已知扫频系数，需提供 `--trajectory_file`。提供独立实测记录时，程序计算预测相对实测的误差。[回放参数校验](src/pace_sim2real/utils/fit_replay.py)
 
 | 命令行选项 | 行为 |
 | --- | --- |
@@ -136,6 +173,8 @@ uv run python scripts/pace/data_collection.py --task Isaac-Pace-Sevnce-X5-v0 \
 ```
 
 ## 离线绘图与优化诊断
+
+全量且含位置组的配对结果使用 v2，部分关节或纯速度结果使用 v3。v3 还保存任务完整关节分组、未记录关节的保持目标，以及参与延迟的驱动组。TensorBoard 和离线图按本次记录的关节展示参数、响应和分组误差。
 
 每次拟合在 `logs/pace-sim2real/<任务名>/<时间戳>/` 写入一套结果。`best_result.pt` 保存全程实际评估过的最佳候选及其配对响应、参考轨迹和误差。`config.pt` 保存拟合配置和参考数据，`mean_*.pt` 保存指定代的分布均值，`progress.pt` 在启用过程保存时生成。
 

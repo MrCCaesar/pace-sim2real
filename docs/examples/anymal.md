@@ -33,7 +33,7 @@ Inside the virtual environment, run:
 
 ```bash
 cd ~/pace-sim2real
-python scripts/pace/data_collection.py
+python scripts/pace/data_collection.py --task Isaac-Pace-Anymal-D-v0
 ```
 
 ![ANYmal data collection](../assets/anymal_data_collect_web.webp)
@@ -41,7 +41,7 @@ python scripts/pace/data_collection.py
 The collected data is saved in:
 
 ```
-pace-sim2real/data/anymal_d_sim/chirp_data.pt
+pace-sim2real/data/Isaac-Pace-Anymal-D-v0/chirp_data.pt
 ```
 
 This dataset serves as the input for the PACE optimization pipeline.

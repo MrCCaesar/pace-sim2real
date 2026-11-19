@@ -283,3 +283,99 @@ Post-implementation user amendment executed within existing files: config-owned 
 - ANYmal / Isaac Sim PhysX：在临时目录依次执行固定参数采集（0.03 s）、一代拟合和指定结果的文件回放。三次使用 `--task Isaac-Pace-Anymal-D-v0 --num_envs 2 --visualizer none physics=isaacsim_physx`，拟合额外使用 `env.sim2real.cmaes.max_iteration=1`，回放使用 `--fit_result PATH --trajectory_file INPUT --output OUTPUT`。新结果含 61 个参数和 12 帧位置响应，复现的最大绝对差为 0 rad，保存三字段。测试发现 Kit 关闭可能结束 Python，已将保存、绘图和指标报告移入启动器生命周期。本机缺少独立 ovphysx 包；此项实测使用用户已授权的 Isaac Sim PhysX。
 - 规范审查已复核资源预检、集成测试按需运行、配对时间和轨迹有限性。规格审查已复核自定义拟合参考文件保护、诊断中的参数名称和超限播放；独立轨迹的预测精度只报告，超限用例单独构造。本阶段检验自动绘图路径，人工 GUI 观察及正式 Verify 留待后续。
 - 对提交 1f5e88d 单独解包后，使用其已提交的拟合器、采集器和任务代码重跑 X5 集成用例，仅共用本机机器人资产及依赖。1 项通过，复现最大差与独立 RMSE 均与上述结果一致，确认 CR3 功能可独立于工作区内此前的拟合性能改动运行。
+
+## CR4 · 任意关节组合的拟合与回放 · Plan（已批准并发布）
+
+依据为用户批准的 [CR4 规格](spec.md)、[接口](interfaces.md) 和 ADR 0011–0013。以下编号是本地任务编号。每项与对应测试及使用说明一起交付。
+
+| 任务 | 前置 | 主要交付 | 需求与决策 |
+| --- | --- | --- | --- |
+| CR4-T1 | 无 | 由同一任务配置读取任意非空记录组合，按文件列序选取边界和尺度 | R1、R2、R6、R7；Q10、Q12 |
+| CR4-T2 | T1 | 在完整机器人上执行部分关节拟合，写出与最佳候选配对的 v3 | R1–R5、R7、R8；Q7–Q9、Q11–Q12 |
+| CR4-T3 | T2 | 在 TensorBoard 和离线图中检查候选、误差、收敛和分组响应 | R1、R3、R7、R8；Q9 |
+| CR4-T4 | T2 | 用原文件复现拟合响应，或用独立文件和新保持工况回放 | R2–R8；Q7–Q11、Q13 |
+| CR4-T5 | T4 | 省略轨迹文件时，仅对已辨识关节生成扫频并播放 | R2–R5、R7；Q14 |
+
+### CR4-T1 · 选择并读取实际信号
+
+主要涉及 `collection_contracts.py`、`PaceCfg` 和现有拟合契约测试。保留整机控制分组，用独立的两个 `reference_*` 字段解析实际信号。按关节名映射文件列、动作列、模型索引和整机参数块。
+
+- [x] 使用可区分的通道值和上下界，检查单位置、单速度、非对称混合、两组默认全量及组内乱序。分别覆盖 `None`、`[]` 和显式列表，按名抽取逐关节尺度、偏置、可选摩擦比例，保留唯一的共享延迟。
+- [x] 校验字段成对、时钟、形状、有限值、类型归属、重名和未知关节。解析后两组皆空时报告错误。原有三字段纯位置和五字段全量参考继续可读。
+- [x] 在使用文档给出一份“单腿三位置加一轮速”配置和一份仅速度配置，标出文件实际列序。
+
+### CR4-T2 · 拟合并保存配对结果
+
+主要涉及 `fit.py`、`cma_es.py` 及 T1 的共享映射。预先组装完整动作序列。每轮依 Q7、Q11 恢复首帧，未记录关节跟踪任务的保持目标。仅按选中关节写机械参数、合成偏置与统计损失；候选延迟写入包含记录通道的每个完整驱动组。
+
+- [x] X5 验收配置采用 FL、FR、RL、RR 四个驱动器组，每组含本腿 hip、thigh、calf、foot。逐腿切换四份文件，每份分别有 3 路位置、1 路速度和 16 项基础参数。另取单轮、跨腿不对称组合，检查相关组的全部通道使用同一候选延迟，其余组各自保留默认延迟。
+- [x] 至少用两个可区分的候选或代核对状态恢复；未记录关节采用可区分的非零保持目标或默认偏置，确认每步命令、默认机械参数及组内偏置。仅速度时以速度误差计算有限评分；混合时按有效组的尺度和权重手算复核。
+- [x] 输出批准的 v3 字段、具名参数与同一最佳候选的参考和响应，缺失组的 RMSE 为 None。现有单一 dt 全量任务继续读写 v2；覆盖 Newton 单一摩擦与 PhysX 可选比例的参数布局。文档说明结果中哪些值来自辨识，哪些描述试验工况。
+
+### CR4-T3 · 检查优化过程与离线结果
+
+主要涉及 `cma_es.py` 的日志、`plot_trajectory.py` 和现有拟合/绘图测试。
+
+- [x] 实读 TensorBoard 事件文件。按名称核对所选参数的分布、均值和当代最佳值，共享延迟仅一项；终端和事件仅报告存在的响应组及其物理单位。
+- [x] 离线读取有效全量 v2、部分及纯速度 v3；重新计算评分与 RMSE，检查配对候选一致性。绘图核对所选关节名称、输入和响应数据、图例及单位；进程分数曲线沿用现有开关。为使用文档补充两个版本的查看示例。
+
+### CR4-T4 · 按文件回放和复现
+
+主要涉及 `fit_replay.py`、`data_collection.py` 和现有回放测试。复用 T1–T2 的映射与物理规则，检查结果的完整控制范围、参与组、后端、求解器和时钟。按本次文件声明与结果逐组匹配并重排，按当前任务构造保持目标。
+
+- [x] 对四份逐腿记录分别检查回放驱动组、输出列及诊断。控制工况相同时，对已保存的最佳响应做步前逐样本比较，位置最大绝对差 ≤ 0.0001 rad、速度最大绝对差 ≤ 0.001 rad/s。
+- [x] 在独立轨迹上变更未记录关节的保持角或速度，核对旧值、新值、关节名及单位。确认新目标实际生效并完成回放；只报告有效组的独立预测 RMSE，允许任意有限误差。
+- [x] 验证同集合乱序文件可回放，成员或跟踪类型变化会报错；实际另存的响应仅含选中通道，默认文件和输入受保护。用原全量 v2 及既有固定采集路径做回归。在使用文档区分原轨迹复现与新工况预测。
+
+### CR4-T5 · 仅对已辨识关节生成扫频
+
+在 `data_collection.py` 的无轨迹文件分支使用结果内的关节名，按任务既有系数生成选中关节的扫频，对其他关节发送保持目标。
+
+- [x] 单腿、非对称及仅速度的例子均按名称核对中心、幅度、方向和实际动作列；同时检查未选关节每步的保持目标。
+- [x] 缺少适用系数时指出需要提供轨迹文件。给出文件后按 T4 路径执行；原有显式文件与扫频参数互斥、显式或最新运行选取和输出保护继续有效。
+- [x] 在 README 和现有使用说明中给出文件与自动扫频两种命令，说明无实测文件时展示的是命令跟踪效果。
+
+### Verify 交接
+
+各任务均带小规模自动化用例，优先扩充现有 `tests/test_mixed_collection_fit.py` 与 `tests/test_fit_replay.py`。正式 Verify 按任务编号登记命令、结果与偏差。四组逐腿场景贯穿拟合、日志、绘图和文件回放。用于物理复现的参考输入须来自相同保持工况；从全机同时扫频的数据裁列只用于映射检查。
+
+先运行 CPU 契约、评分、事件文件和无窗口绘图检查，再串行执行短程 Isaac Lab 验证；启动前核对 RAM/VRAM，使用 2 个环境及无窗口模式。沿用现有全量回归用例，分别记录受控复现误差与独立预测误差。当前交付为任务拆分，验收结果在获准实施和验证后填写。
+
+### CR4 发布记录
+
+用户批准五项拆分并授权发布为 [#4](https://github.com/MrCCaesar/pace-sim2real/issues/4) 的子工单。GitHub 已回读核实正文、打开状态、ready-for-agent 标签、父子关系和下表所列前置依赖。
+
+| 任务 | GitHub 子工单 | 前置工单 |
+| --- | --- | --- |
+| CR4-T1 | [#17 按文件列序读取任意位置与速度关节子集](https://github.com/MrCCaesar/pace-sim2real/issues/17) | 无 |
+| CR4-T2 | [#18 在完整机器人上拟合部分关节并保存配对结果](https://github.com/MrCCaesar/pace-sim2real/issues/18) | #17 |
+| CR4-T3 | [#19 在 TensorBoard 和离线图中查看部分关节拟合结果](https://github.com/MrCCaesar/pace-sim2real/issues/19) | #18 |
+| CR4-T4 | [#20 用实测文件回放部分关节并验证独立工况](https://github.com/MrCCaesar/pace-sim2real/issues/20) | #18 |
+| CR4-T5 | [#21 仅对已辨识关节生成并回放扫频](https://github.com/MrCCaesar/pace-sim2real/issues/21) | #20 |
+
+### CR4 Implement 交接 · #17–#21
+
+| 工单 | 已实现及实施检查 |
+| --- | --- |
+| #17 | `collection_contracts.py` 独立解析两组参考列并校验张量。全任务参数边界和逐关节尺度按名称投影到文件顺序。CPU 用例覆盖空组、乱序、重复、未知、错组和附加摩擦比例。 |
+| #18 | `fit.py` 与 `subset_control.py` 在完整动作空间预组装保持目标。CMA 仅辨识选中通道，部分/纯速度结果写 v3。两组候选的定点测试检查实际写入的机械参数索引、全部初态、整组延迟和组内默认偏置。 |
+| #19 | `cma_es.py` 与 `plot_trajectory.py` 按有效组记录事件和配对轨迹。纯速度手算例得到 score=2.5、速度 RMSE=√10 rad/s。独立绘图进程使用 Agg 检查已保存的记录。 |
+| #20 | `fit_replay.py` 与 `data_collection.py` 按当前文件列序解析命令、测量及具名参数，核对整机与驱动组，报告保持目标变化。相同配置、合成输入的 X5 Newton 短程复现通过。 |
+| #21 | 无文件回放根据结果中的名称选取任务已有中心、方向与幅度。CPU 核对跨腿数值和无系数报错，实际回放覆盖纯速度和非对称输入。README.md 与 docs/usage.md 有文件回放和扫频示例。 |
+
+实施检查使用 2 个环境、无查看器，逐个启动仿真。四份单腿记录各使用 12 个步前样本、2 代和 4 个驱动组。逐腿核对输出与配对响应的最大绝对差如下。
+
+| 逐腿记录 | 位置（rad） | 速度（rad/s） |
+| --- | ---: | ---: |
+| FL | 2.98e-8 | 1.19e-7 |
+| FR | 1.49e-8 | 1.19e-7 |
+| RL | 7.45e-9 | 1.19e-7 |
+| RR | 2.98e-8 | 0 |
+
+- 六种工况命令为 `PACE_RUN_SUBSET_INTEGRATION=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -m pytest -q tests/test_fit_replay.py -k x5_subset`。四份逐腿、仅轮和非对称混合均通过。加入仅位置用例后，用同一环境运行 `tests/test_fit_replay.py::test_x5_subset_fit_and_replay[position]` 和 `[FL]`，两项通过。
+- 全量 v2 独立短程检查在临时目录依次运行 `data_collection.py --duration .04`、`fit.py env.sim2real.data_dir=chirp_data.pt env.sim2real.cmaes.max_iteration=1`、`data_collection.py --fit_result --trajectory_file data/Isaac-Pace-Sevnce-X5-v0/chirp_data.pt --output replay.pt`。三次均指定 `--task Isaac-Pace-Sevnce-X5-v0 --num_envs 2 --visualizer none`。确认 schema_version=2，配对位置与速度的最大绝对差均为零。
+- 启用当时六项子集集成的全套运行得到 141 项通过、2 项失败、1 项跳过。两项失败都是原生 MuJoCo 输出路径断言。工作区既有脚本写入 `data/Isaac-Pace-Sevnce-X5-v0/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt`，既有测试读取 `data/x5_sim/chirp_data.pt`。在独立临时目录用 `git archive HEAD` 的原脚本与原测试挂载同一模型，两项均通过。
+- 变更的仿真入口、优化器及共享模块运行 `uvx --offline pyright --pythonpath .venv/bin/python` 的定向检查，零错误及警告。上述实现模块和回放测试通过 Ruff。既有混合测试文件原段落还有 1 项 I001 和 2 项 E501。 `git diff --check` 通过。
+- 实际部分关节仿真使用 Newton MJWarp。PhysX 的摩擦比例布局和解码由 CPU 回归覆盖。正式 Verify 仍待批准。
+
+CR4 正式 Verify 已完成。逐工单证据、数值、全量回归三项失败的归因见 [验证记录](verification.md)。
