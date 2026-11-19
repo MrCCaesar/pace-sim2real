@@ -1,6 +1,7 @@
 """Exercise the fitted-parameter file contract independently of simulator startup."""
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -288,10 +289,204 @@ def test_cli_protects_inputs_before_simulation(tmp_path):
     configured = default.with_name("training.pt")
     configured.write_bytes(b"preserve the configured fit reference")
     args.append("env.sim2real.data_dir=training.pt")
-    for path in (result, trajectory, default, configured):
+    native = default.with_name("mujoco_chirp_data.pt")
+    native.write_bytes(b"preserve the native MuJoCo collection")
+    for path in (result, trajectory, default, native, configured):
         before = path.read_bytes()
         completed = subprocess.run([*args, "--output", str(path)], env=env, capture_output=True, text=True, timeout=60)
         assert completed.returncode != 0 and "protected" in completed.stderr
         assert path.read_bytes() == before
     completed = subprocess.run([*args, "--duration", "20"], env=env, capture_output=True, text=True, timeout=60)
     assert completed.returncode == 2 and "--trajectory_file and --duration" in completed.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(os.getenv("PACE_RUN_SUBSET_INTEGRATION") != "1", reason="Opt in to the four-drive X5 checks")
+@pytest.mark.parametrize("selection", ["FL", "FR", "RL", "RR", "wheel", "asymmetric", "position"])
+def test_x5_subset_fit_and_replay(tmp_path, selection):
+    """Each process runs the normal CLI with the four physical drive groups of the test robot."""
+    import psutil
+    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+    if not torch.cuda.is_available():
+        pytest.skip("X5 Newton integration requires CUDA")
+    task = "Isaac-Pace-Sevnce-X5-v0"
+    legs = [f"{selection}_{kind}_joint" for kind in ("calf", "hip", "thigh")]
+    wheels = [f"{selection}_foot_joint"]
+    if selection == "wheel":
+        legs, wheels = [], ["FL_foot_joint"]
+    elif selection == "position":
+        legs, wheels = ["FR_calf_joint"], []
+    elif selection == "asymmetric":
+        legs, wheels = ["RR_calf_joint", "FR_hip_joint"], ["RL_foot_joint"]
+
+    runner = """
+import importlib, os, sys
+sys.path.insert(0, sys.argv.pop(1))
+entry = importlib.import_module(sys.argv.pop(1))
+resolve = entry.resolve_task_config
+def four_drives(*args, **kwargs):
+    cfg, agent = resolve(*args, **kwargs)
+    source = cfg.scene.robot.actuators["joints"]
+    cfg.scene.robot.actuators = {
+        side: source.replace(joint_names_expr=[side + "_.*_joint"], encoder_bias=0.03)
+        for side in ("FL", "FR", "RL", "RR")
+    }
+    cfg.scene.robot.init_state.joint_vel = {".*_foot_joint": 0.4, ".*_(hip|thigh|calf)_joint": 0.0}
+    if os.environ.get("CHANGE_HOLD"):
+        cfg.scene.robot.init_state.joint_vel[".*_foot_joint"] = 0.7
+    return cfg, agent
+entry.resolve_task_config = four_drives
+entry.main()
+"""
+
+    def run(script, *args, pos=legs, vel=wheels, change_hold=False):
+        if min(psutil.virtual_memory().available, torch.cuda.mem_get_info()[0]) < 4 * 1024**3:
+            pytest.skip("Insufficient free RAM or VRAM for bounded X5 run")
+        command = [
+            sys.executable,
+            "-c",
+            runner,
+            str(ROOT / "scripts/pace"),
+            script,
+            "--task",
+            task,
+            "--num_envs",
+            "2",
+            "--visualizer",
+            "none",
+            *map(str, args),
+            f"env.sim2real.reference_leg_order={json.dumps(pos)}",
+            f"env.sim2real.reference_wheel_order={json.dumps(vel)}",
+        ]
+        result = subprocess.run(
+            command,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=dict(
+                os.environ,
+                PACE_ROOT=str(tmp_path),
+                MPLBACKEND="Agg",
+                CHANGE_HOLD="yes" if change_hold else "",
+                OMP_NUM_THREADS="2",
+                MKL_NUM_THREADS="2",
+            ),
+        )
+        assert result.returncode == 0, (result.stdout + result.stderr)[-5000:]
+        return result.stdout
+
+    path = tmp_path / "input.pt"
+    t = torch.arange(12, dtype=torch.float64) * 0.0025
+    data = {"time": t}
+    for group, names, factor in (("pos", legs, 0.03), ("vel", wheels, 1.3)):
+        if names:
+            wave = torch.stack([factor * (i + 1 + torch.sin(t.float() * 20)) for i in range(len(names))], dim=1)
+            data["dof_" + group] = wave
+            data["des_dof_" + group] = wave + factor
+    torch.save(data, path)
+    run("fit", f"env.sim2real.data_dir={path}", "env.sim2real.cmaes.max_iteration=2", "env.sim2real.cmaes.epsilon=0")
+    (result_path,) = tmp_path.glob("logs/pace-sim2real/*/*/best_result.pt")
+    best = torch.load(result_path, weights_only=True)
+    assert best["schema_version"] == 3 and best["leg_order"] == legs and best["wheel_order"] == wheels
+    assert len(best["params"]) == 3 * (len(legs) + len(wheels)) + len(legs) + 1
+    settings = best["settings"]
+    assert set(settings["delay_actuator_groups"]) == {n[:2] for n in legs + wheels}
+    for side, names in settings["delay_actuator_groups"].items():
+        assert set(names) == {f"{side}_{kind}_joint" for kind in ("hip", "thigh", "calf", "foot")}
+    events = EventAccumulator(str(result_path.parent)).Reload()
+    tags = events.Tags()["scalars"]
+    assert ("error/position_rmse_rad" in tags) == bool(legs)
+    assert ("error/velocity_rmse_rad_s" in tags) == bool(wheels)
+    assert len(events.Scalars("0_Delay/mean")) == 2
+    assert {name.removeprefix("1_Armature/best_") for name in tags if name.startswith("1_Armature/best_")} == set(
+        legs + wheels
+    )
+
+    output = tmp_path / "played.pt"
+    run("data_collection", "--fit_result", result_path, "--trajectory_file", path, "--output", output)
+    response = torch.load(output, weights_only=True)
+    assert response.keys() == data.keys()
+    for group, names, atol in (("pos", legs, 0.0001), ("vel", wheels, 0.001)):
+        if names:
+            torch.testing.assert_close(response["dof_" + group], best["sim_dof_" + group], atol=atol, rtol=0)
+            torch.testing.assert_close(response["des_dof_" + group], data["des_dof_" + group])
+    process = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/pace/plot_trajectory.py"), "--task", task, "--plot_trajectory"],
+        cwd=tmp_path,
+        env=dict(os.environ, PACE_ROOT=str(tmp_path), MPLBACKEND="Agg"),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert process.returncode == 0, process.stderr
+    if selection in ("wheel", "asymmetric"):
+        run("data_collection", "--fit_result", result_path, "--duration", ".03", "--output", output, pos=[], vel=[])
+        sweep = torch.load(output, weights_only=True)
+        assert sweep.keys() == data.keys()
+        torch.testing.assert_close(sweep["des_dof_vel"][0], torch.zeros(len(wheels)))
+        for k in ("dof_pos", "des_dof_pos"):
+            if k in data:
+                data[k] = data[k].flip(1)
+        torch.save(data, path)
+        stdout = run(
+            "data_collection",
+            "--fit_result",
+            result_path,
+            "--trajectory_file",
+            path,
+            "--output",
+            output,
+            pos=list(reversed(legs)),
+            change_hold=True,
+        )
+        assert "hold_velocities" in stdout and "rad/s" in stdout
+        assert "Velocity prediction RMSE" in stdout
+
+
+def test_named_subset_chirp_uses_the_full_task_coefficients():
+    program = """
+from types import SimpleNamespace
+import torch
+from data_collection import _named_chirp
+args = SimpleNamespace(duration=.1, min_frequency=1., max_frequency=2.)
+pos, vel = _named_chirp(args, .01, "cpu", ["RR_hip_joint","FL_calf_joint"], ["FR_foot_joint"])
+t = torch.arange(10, dtype=torch.float64) * .01
+signal = (2 * torch.pi * (t + 5 * t.square())).sin().float()
+torch.testing.assert_close(pos[:, 0], -.25 * signal)
+torch.testing.assert_close(pos[:, 1], .99 * (signal - 1.4))
+torch.testing.assert_close(vel[:, 0], 10 * signal)
+try:
+    _named_chirp(args, .01, "cpu", ["custom_joint"], [])
+except ValueError as error:
+    assert "--trajectory_file" in str(error)
+else:
+    raise AssertionError("Expected an explicit file requirement for an unknown joint")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program], cwd=ROOT / "scripts/pace", text=True, capture_output=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("task_leg_order", ["hip", "unknown"]),
+        ("task_wheel_order", ["hip"]),
+        ("hold_positions", {"calf": float("nan")}),
+        ("hold_velocities", {}),
+        ("delay_actuator_groups", {"front": ["hip"]}),
+    ],
+)
+def test_partial_replay_rejects_incompatible_conditions(replay_contract, field, value):
+    current = dict(
+        task_leg_order=["hip", "calf"],
+        task_wheel_order=["wheel"],
+        hold_positions={"calf": 0.1},
+        hold_velocities={"wheel": 0.5},
+        delay_actuator_groups={"front": ["wheel", "hip"]},
+    )
+    with pytest.raises(ValueError, match=field):
+        replay_contract.compare_replay_conditions({**current, field: value}, current)

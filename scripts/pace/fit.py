@@ -21,12 +21,13 @@ import os
 import sys
 
 import gymnasium as gym
-import isaaclab_tasks  # noqa: F401
 import torch
+
 from isaaclab.app import launch_simulation
 from isaaclab.app.sim_launcher import fuse_kit_args
 from isaaclab.cli import load_external_tasks
 from isaaclab.utils import validate
+
 from isaaclab_rl.entrypoints.common import (
     add_video_args,
     apply_env_overrides,
@@ -36,6 +37,8 @@ from isaaclab_rl.entrypoints.common import (
     normalize_task_name,
     pre_launch_video_config,
 )
+
+import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import resolve_task_config, setup_preset_cli
 
 """Rest everything follows."""
@@ -49,9 +52,12 @@ from pace_sim2real.utils.collection_contracts import (
     add_runtime_args,
     load_reference_data,
     pack_actions,
+    reference_groups,
     resolve_action_mapping,
     resolve_joint_groups,
+    selected_fit_config,
 )
+from pace_sim2real.utils.subset_control import SubsetControl
 
 _SEED = 42
 
@@ -112,8 +118,13 @@ def main(argv: list[str] | None = None):
             "time_mode": cfg.time_mode,
             "legacy_sample_dt": cfg.legacy_sample_dt,
         }
+        legs, wheels = reference_groups(cfg)
+        control = SubsetControl.for_fit(env.unwrapped, legs, wheels)
+        if control is not None:
+            settings.update(control.settings())
+        bounds, pos_scale, vel_scale = selected_fit_config(cfg, legs, wheels)
         opt = CMAESOptimizer(
-            bounds=cfg.bounds_params,
+            bounds=bounds,
             population_size=env.unwrapped.num_envs,
             log_dir=log_dir,
             joint_order=legs + wheels,
@@ -128,13 +139,13 @@ def main(argv: list[str] | None = None):
             leg_order=legs,
             wheel_order=wheels,
             reference_settings=settings,
-            position_error_scale=cfg.cmaes.position_error_scale,
-            velocity_error_scale=cfg.cmaes.velocity_error_scale,
+            position_error_scale=pos_scale,
+            velocity_error_scale=vel_scale,
             position_weight=cfg.cmaes.position_weight,
             velocity_weight=cfg.cmaes.velocity_weight,
         )
         cleanup.callback(opt.close)
-        fit_reference(env, data, opt)
+        fit_reference(env, data, opt, control=control)
 
 
 @contextlib.contextmanager
@@ -202,33 +213,58 @@ def _replay_joint_actions(base):
 
 
 @torch.inference_mode()
-def fit_reference(env, data, opt):
+def fit_reference(env, data, opt, *, control=None):
     """Replay prepacked commands and score each completed rollout as one batch."""
     base = getattr(env, "unwrapped", env)
     dt = _fit_dt(base.cfg)
     if base.cfg.sim.use_newton_actuators:
         raise ValueError("Fitting requires Python PACE actuators")
-    legs, wheels = resolve_joint_groups(base.cfg.sim2real)
-    mapping = resolve_action_mapping(base, legs, wheels)
+    legs, wheels = reference_groups(base.cfg.sim2real)
+    if control is None:
+        control = SubsetControl.for_fit(base, legs, wheels)
+        if control is not None:
+            opt.save_reference_settings(control.settings())
+    mapping = control.mapping if control else resolve_action_mapping(base, legs, wheels)
     robot = base.scene["robot"]
     # Clock checks use host scalars; never read one timestamp from CUDA per step.
     timestamps = data["time"].detach().cpu().tolist()
     reference = {key: value.to(base.device) for key, value in data.items() if key not in ("time", "original_time")}
     batch, count = base.num_envs, len(timestamps)
-    measured_positions = reference["dof_pos"].double().unsqueeze(0).expand(batch, -1, -1)
+    positions_ref = reference.get("dof_pos")
+    if positions_ref is None:
+        positions_ref = torch.empty((count, 0), device=base.device)
+    measured_positions = positions_ref.double().unsqueeze(0).expand(batch, -1, -1)
     measured_velocities = reference["dof_vel"].double().unsqueeze(0).expand(batch, -1, -1) if wheels else None
-    initial = reference["dof_pos"][0].expand(batch, -1)
+    initial = positions_ref[0].expand(batch, -1)
     initial_velocity = reference["dof_vel"][0].expand(batch, -1) if wheels else None
-    actions = pack_actions(mapping, reference["des_dof_pos"], reference.get("des_dof_vel"))
+    pos = reference.get("des_dof_pos", positions_ref)
+    vel = reference.get("des_dof_vel")
+    leg_ids, wheel_ids = mapping["leg_ids"], mapping["wheel_ids"]
+    if control:
+        pos, vel = control.targets(pos, vel)
+        leg_ids, wheel_ids = control.leg_ids, control.wheel_ids
+        control.check_delay(opt.bounds[opt.delay_idx, 1])
+    actions = pack_actions(mapping, pos, vel)
     actions = actions.unsqueeze(1).expand(-1, batch, -1)
     # Reuse full-state buffers across generations; include the post-step final state.
     positions = torch.empty((count + 1, batch, robot.num_joints), device=base.device)
     velocities = torch.empty_like(positions)
     while True:
         env.reset()
-        opt.update_simulator(
-            robot, mapping["leg_ids"] + mapping["wheel_ids"], initial, initial_wheel_velocity=initial_velocity
-        )
+        if control:
+            params = opt.sim_params
+            control.apply(
+                params[:, opt.armature_idx],
+                params[:, opt.damping_idx],
+                params[:, opt.friction_idx],
+                None if "newton" in type(robot).__module__ else opt.dynamic_friction(),
+                params[:, opt.bias_idx],
+                params[:, opt.delay_idx].floor().long(),
+                initial,
+                initial_velocity,
+            )
+        else:
+            opt.update_simulator(robot, leg_ids + wheel_ids, initial, initial_wheel_velocity=initial_velocity)
         origin = base._sim_step_counter
         with _replay_joint_actions(base):
             for step, timestamp in enumerate(timestamps):
@@ -247,9 +283,9 @@ def fit_reference(env, data, opt):
         if not (torch.isfinite(positions).all() & torch.isfinite(velocities).all()):
             raise RuntimeError("Nonfinite fitting state")
         opt.tell(
-            positions[:-1, :, mapping["leg_ids"]].permute(1, 0, 2),
+            positions[:-1, :, leg_ids].permute(1, 0, 2),
             measured_positions,
-            sim_dof_vel=velocities[:-1, :, mapping["wheel_ids"]].permute(1, 0, 2) if wheels else None,
+            sim_dof_vel=velocities[:-1, :, wheel_ids].permute(1, 0, 2) if wheels else None,
             real_dof_vel=measured_velocities,
         )
         opt.evolve()

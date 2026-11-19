@@ -34,12 +34,53 @@ class JointParameters:
 
 def load_replay_parameters(path: Path, cfg, legs, wheels) -> JointParameters:
     """Validate a current fit and reorder its named parameters into task order."""
+    return replay_parameters(read_replay_record(path), cfg, legs, wheels, path)
+
+
+def read_replay_record(path):
     record = torch.load(path, map_location="cpu", weights_only=True)
-    if not isinstance(record, dict) or record.get("schema_version") != 2:
-        raise ValueError(f"{path}: expected a paired v2 best_result.pt")
+    if not isinstance(record, dict) or record.get("schema_version") not in (2, 3):
+        raise ValueError(f"{path}: expected a paired v2/v3 best_result.pt")
+    return record
+
+
+def replay_parameters(record, cfg, legs, wheels, path):
     _check_physics(record, path, cfg)
     _check_paired_response(record, legs, wheels)
     return _named_parameters(record, legs, wheels)
+
+
+def compare_replay_conditions(stored, current):
+    """Verify task membership and delay scope, and report changed holding targets."""
+
+    def same_names(names, expected):
+        return (
+            isinstance(names, (tuple, list))
+            and all(isinstance(n, str) for n in names)
+            and sorted(names) == sorted(expected)
+        )
+
+    for field in ("task_leg_order", "task_wheel_order"):
+        names = stored.get(field)
+        if not same_names(names, current[field]):
+            raise ValueError(f"Incompatible {field} in subset result")
+    drives = stored.get("delay_actuator_groups")
+    expected = current["delay_actuator_groups"]
+    if (
+        not isinstance(drives, dict)
+        or drives.keys() != expected.keys()
+        or any(not same_names(drives[key], names) for key, names in expected.items())
+    ):
+        raise ValueError("Incompatible delay_actuator_groups in subset result")
+    for field, unit in (("hold_positions", "rad"), ("hold_velocities", "rad/s")):
+        old = stored.get(field)
+        if not isinstance(old, dict) or old.keys() != current[field].keys():
+            raise ValueError(f"Invalid {field} in subset result")
+        for name, value in current[field].items():
+            if type(old[name]) not in (int, float) or not math.isfinite(old[name]):
+                raise ValueError(f"Invalid {field} for {name}")
+            if old[name] != value:
+                print(f"{name} {field}: {old[name]:.8g} -> {value:.8g} {unit}")
 
 
 def _check_physics(record, path, cfg):
@@ -91,6 +132,8 @@ def _check_paired_response(record, legs, wheels):
             raise ValueError(f"Incompatible {field}: fit={names}, task={list(group)}")
 
         response = "dof_pos" if field == "leg_order" else "dof_vel"
+        if record["schema_version"] == 3 and not group and "sim_" + response in record:
+            raise ValueError(f"Unexpected simulated {response} for absent group")
         if group:
             for key, source in ((response, reference), ("des_" + response, reference), ("sim_" + response, record)):
                 tensor = source.get(key)

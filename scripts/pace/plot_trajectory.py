@@ -66,10 +66,53 @@ def result_errors(result: dict[str, Any]) -> dict[str, float | None]:
     return errors
 
 
+def _validate_subset_settings(result):
+    settings = result["settings"]
+    all_joints = set()
+    selected = set(result["leg_order"]) | set(result["wheel_order"])
+    for field, group, holding in (
+        ("task_leg_order", "leg_order", "hold_positions"),
+        ("task_wheel_order", "wheel_order", "hold_velocities"),
+    ):
+        full = settings.get(field)
+        if (
+            not isinstance(full, (list, tuple))
+            or any(not isinstance(n, str) or not n for n in full)
+            or len(set(full)) != len(full)
+            or all_joints.intersection(full)
+            or not set(result[group]).issubset(full)
+        ):
+            raise ValueError(f"Invalid {field} in subset result")
+        all_joints.update(full)
+        held = settings.get(holding)
+        if not isinstance(held, dict) or held.keys() != set(full) - set(result[group]):
+            raise ValueError(f"Invalid {holding} in subset result")
+        if any(type(v) not in (float, int) or not math.isfinite(v) for v in held.values()):
+            raise ValueError(f"Nonfinite or invalid {holding}")
+    drives = settings.get("delay_actuator_groups")
+    if not isinstance(drives, dict):
+        raise ValueError("Missing participating delay_actuator_groups")
+    covered = set()
+    for name, members in drives.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(members, (list, tuple))
+            or any(not isinstance(n, str) or n not in all_joints for n in members)
+            or len(set(members)) != len(members)
+            or covered.intersection(members)
+            or not selected.intersection(members)
+        ):
+            raise ValueError("Invalid participating delay_actuator_groups")
+        covered.update(members)
+    if not selected.issubset(covered):
+        raise ValueError("Selected joints missing from delay_actuator_groups")
+
+
 def load_result(path: str | Path) -> dict[str, Any]:
-    """Load a CPU schema-v2 record and validate all data needed for inspection."""
+    """Load a CPU paired record and validate all data needed for inspection."""
     result = torch.load(path, map_location="cpu", weights_only=True)
-    if not isinstance(result, dict) or result.get("schema_version") != 2:
+    if not isinstance(result, dict) or result.get("schema_version") not in (2, 3):
         raise ValueError("Legacy result has no verified parameter/trajectory pairing; generate a new paired fit result")
     required = {
         "time",
@@ -103,10 +146,12 @@ def load_result(path: str | Path) -> dict[str, Any]:
         names = result[names_key]
         if not isinstance(names, (list, tuple)) or any(not isinstance(n, str) or not n for n in names):
             raise ValueError(f"Invalid {names_key}")
-        if group == "position" and not names:
+        if result["schema_version"] == 2 and group == "position" and not names:
             raise ValueError("Result requires at least one leg joint")
         all_names.extend(names)
         if not names:
+            if result["schema_version"] == 3 and "sim_" + field in result:
+                raise ValueError(f"Unexpected sim_{field} for absent group")
             continue
         for key in (field, "des_" + field):
             _validate_tensor(result["reference"].get(key), (len(time), len(names)), "reference." + key)
@@ -115,6 +160,8 @@ def load_result(path: str | Path) -> dict[str, Any]:
             raise ValueError(f"Missing {group} error normalization settings")
     if len(set(all_names)) != len(all_names):
         raise ValueError("Joint groups must have unique, disjoint names")
+    if result["schema_version"] == 3:
+        _validate_subset_settings(result)
     names = result["parameter_names"]
     if not isinstance(names, (list, tuple)) or not names or any(not isinstance(n, str) or not n for n in names):
         raise ValueError("Invalid parameter_names")
@@ -207,7 +254,10 @@ def _print_result(result: dict[str, Any]) -> None:
     for name, value in zip(result["parameter_names"], result["params"], strict=True):
         print(f"{name}: {float(value):.8g}")
     print(f"Applied delay: {result['delay_steps']} physics steps = {result['delay_seconds']:.8g} s")
-    print("Verified errors:", {key: result[key] for key in ("position_rmse", "velocity_rmse", "score")})
+    print(
+        "Verified errors:",
+        {key: result[key] for key in ("position_rmse", "velocity_rmse", "score") if result[key] is not None},
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

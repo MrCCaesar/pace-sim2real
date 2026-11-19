@@ -5,8 +5,10 @@
 from typing import Any, cast
 
 import torch
+
 from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
+
 from isaaclab_assets.robots.anymal import ANYMAL_D_CFG
 
 from pace_sim2real import PaceCfg, PaceSim2realEnvCfg, PaceSim2realSceneCfg
@@ -33,7 +35,6 @@ ANYDRIVE_PACE_ACTUATOR_CFG = PaceDCMotorCfg(
 class AnymalDPaceCfg(PaceCfg):
     """Pace configuration for Anymal-D robot."""
 
-    data_dir: str = "chirp_data.pt"  # located in pace_sim2real/data/Isaac-Pace-Anymal-D-v0/chirp_data.pt
     bounds_params: torch.Tensor = torch.zeros((49, 2))  # 12 + 12 + 12 + 12 + 1 = 49 parameters to optimize
     separate_dynamic_friction: bool = True  # appends 12 dynamic/static friction ratios -> 61 parameters
     joint_order: list[str] = [

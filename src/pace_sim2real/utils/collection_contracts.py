@@ -52,14 +52,61 @@ def resolve_joint_groups(cfg):
         if wheels:
             raise ValueError("Mixed tasks require leg_order")
         legs = combined
-    if not isinstance(legs, (list, tuple)) or not legs or not isinstance(wheels, (list, tuple)):
-        raise ValueError("Require nonempty leg_order and a sequence wheel_order")
+    if not isinstance(legs, (list, tuple)) or not isinstance(wheels, (list, tuple)) or not (legs or wheels):
+        raise ValueError("Require a nonempty joint selection")
     names = tuple(legs) + tuple(wheels)
     if any(not isinstance(n, str) or not n for n in names) or len(set(names)) != len(names):
         raise ValueError("Joint groups must contain unique, disjoint names")
     if combined is not None and not isinstance(combined, type(MISSING)) and tuple(combined) != names:
         raise ValueError("joint_order must equal leg_order + wheel_order")
     return tuple(legs), tuple(wheels)
+
+
+def reference_groups(cfg):
+    """Resolve each file group independently in its declared column order."""
+    groups = []
+    for field, full in zip(("reference_leg_order", "reference_wheel_order"), resolve_joint_groups(cfg), strict=True):
+        names = getattr(cfg, field, None)
+        if names is None:
+            names = full
+        if not isinstance(names, (list, tuple)) or any(not isinstance(name, str) or name not in full for name in names):
+            raise ValueError(f"{field} contains unknown or wrong-type joints: {names}")
+        if len(names) != len(set(names)):
+            raise ValueError(f"Duplicate joint in {field}")
+        groups.append(tuple(names))
+    if not any(groups):
+        raise ValueError("Reference requires at least one recorded joint")
+    return groups[0], groups[1]
+
+
+def selected_fit_config(cfg, legs, wheels):
+    """Project each physical parameter block and both scales to file order."""
+    full_legs, full_wheels = resolve_joint_groups(cfg)
+    full = full_legs + full_wheels
+    selected = [full.index(name) for name in (*legs, *wheels)]
+    width = len(full)
+    delay = 3 * width + len(full_legs)
+    rows = [block * width + i for block in range(3) for i in selected]
+    rows.extend(3 * width + full_legs.index(name) for name in legs)
+    rows.append(delay)
+    if cfg.separate_dynamic_friction:
+        rows.extend(delay + 1 + i for i in selected)
+    expected = delay + 1 + (width if cfg.separate_dynamic_friction else 0)
+    if tuple(cfg.bounds_params.shape) != (expected, 2):
+        raise ValueError(f"Expected {expected} task parameter bounds")
+
+    def scale(value, names, group):
+        if not isinstance(value, list):
+            return value
+        if len(value) != len(group):
+            raise ValueError(f"Expected {len(group)} task joint error scales")
+        return [value[group.index(name)] for name in names]
+
+    return (
+        cfg.bounds_params[rows],
+        scale(cfg.cmaes.position_error_scale, legs, full_legs),
+        scale(cfg.cmaes.velocity_error_scale, wheels, full_wheels),
+    )
 
 
 def resolve_action_mapping(env, leg_order, wheel_order) -> ActionMapping:
@@ -130,11 +177,7 @@ def load_reference_data(path, cfg, step_dt):
 
     import torch
 
-    legs, wheels = resolve_joint_groups(cfg)
-    for key, expected in (("reference_leg_order", legs), ("reference_wheel_order", wheels)):
-        declared = getattr(cfg, key, None)
-        if declared is not None and tuple(declared) != expected:
-            raise ValueError(f"{key} must match task column order")
+    legs, wheels = reference_groups(cfg)
     if getattr(cfg, "reference_bias_model", "feedback_and_measurement") != "feedback_and_measurement":
         raise ValueError("Unsupported reference bias model: recollect data with feedback_and_measurement")
     if getattr(cfg, "reference_delay_mode", "command") not in ("command", "effort"):
@@ -142,21 +185,20 @@ def load_reference_data(path, cfg, step_dt):
     data = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(data, dict):
         raise ValueError("Reference must be a tensor dictionary")
-    fields = {"time", "dof_pos", "des_dof_pos"}
-    velocity_fields = {"dof_vel", "des_dof_vel"}
-    if not fields <= data.keys() or data.keys() - (fields | velocity_fields):
-        raise ValueError("Missing or unknown reference fields")
-    if bool(data.keys() & velocity_fields) and not velocity_fields <= data.keys():
-        raise ValueError("Both wheel velocity fields are required")
-    if wheels and not velocity_fields <= data.keys():
-        raise ValueError("Mixed task requires wheel velocity fields")
+    fields = {"time", "dof_pos", "des_dof_pos", "dof_vel", "des_dof_vel"}
+    if "time" not in data or data.keys() - fields:
+        raise ValueError("Reference fields must match recorded position and velocity groups")
+    for field, group in (("dof_pos", legs), ("dof_vel", wheels)):
+        measured, desired = field in data, "des_" + field in data
+        if measured != desired or (group and not measured):
+            raise ValueError(f"Reference requires paired {field} and des_{field} for recorded channels")
     for key, value in data.items():
         if not isinstance(value, torch.Tensor) or not value.is_floating_point() or not torch.isfinite(value).all():
             raise ValueError(f"{key} must be a finite floating tensor")
     time = data["time"].double()
     if time.ndim != 1 or len(time) < 2 or not (time.diff() > 0).all():
         raise ValueError("time must be increasing with at least two samples")
-    for key in fields - {"time"} | (velocity_fields & data.keys()):
+    for key in data.keys() - {"time"}:
         width = len(wheels) if key.endswith("vel") else len(legs)
         if data[key].shape != (len(time), width):
             raise ValueError(f"{key} shape does not match sample count and declared groups")

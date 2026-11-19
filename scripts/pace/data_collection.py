@@ -53,10 +53,20 @@ from pace_sim2real.utils.collection_contracts import (
     add_runtime_args,
     load_reference_data,
     pack_actions,
+    reference_groups,
     resolve_action_mapping,
     resolve_joint_groups,
 )
-from pace_sim2real.utils.fit_replay import JointParameters, latest_fit_result, load_replay_parameters, prediction_rmse
+from pace_sim2real.utils.fit_replay import (
+    JointParameters,
+    compare_replay_conditions,
+    latest_fit_result,
+    prediction_rmse,
+    read_replay_record,
+    replay_parameters,
+)
+from pace_sim2real.utils.paths import ISAAC_COLLECTION_FILENAME
+from pace_sim2real.utils.subset_control import SubsetControl
 
 _SEED = 42
 
@@ -77,13 +87,14 @@ def main(argv: list[str] | None = None):
     args_cli.device = env_cfg.sim.device
 
     pre_launch_video_config(env_cfg, args_cli)
-    log_dir = os.path.abspath(os.path.join("logs", "pace-sim2real", normalize_task_name(args_cli.task)))
+    task_name = normalize_task_name(args_cli.task)
+    log_dir = os.path.abspath(os.path.join("logs", "pace-sim2real", task_name))
     try:
         validate(env_cfg)
     except (TypeError, ValueError) as exc:
         raise SystemExit(f"Invalid environment configuration: {exc}") from None
 
-    default_output = project_root() / "data" / normalize_task_name(args_cli.task) / "chirp_data.pt"
+    default_output = project_root() / "data" / task_name / ISAAC_COLLECTION_FILENAME
     replay = args_cli.fit_result is not None
     output = default_output
     result_path = None
@@ -93,6 +104,8 @@ def main(argv: list[str] | None = None):
         output = args_cli.output
         fit_reference = default_output.parent / env_cfg.sim2real.data_dir
         protected = [result_path, default_output, fit_reference]
+        if task_name == "Isaac-Pace-Sevnce-X5-v0":
+            protected.append(default_output.with_name("mujoco_chirp_data.pt"))
         if args_cli.trajectory_file is not None:
             protected.append(args_cli.trajectory_file)
             reference = load_reference_data(args_cli.trajectory_file, env_cfg.sim2real, env_cfg.sim.dt)
@@ -105,11 +118,13 @@ def main(argv: list[str] | None = None):
 
     with launch_simulation(env_cfg, args_cli), contextlib.ExitStack() as cleanup:
         # launch_simulation resolves an automatic PhysX preset to its concrete backend.
-        parameters = (
-            load_replay_parameters(result_path, env_cfg, legs, wheels)
-            if result_path is not None
-            else JointParameters.collection_defaults(len(legs), len(wheels))
-        )
+        record = read_replay_record(result_path) if result_path is not None else None
+        task_legs, task_wheels = legs, wheels
+        if record is not None:
+            legs, wheels = _replay_groups(record, env_cfg.sim2real, reference is not None)
+            parameters = replay_parameters(record, env_cfg, legs, wheels, result_path)
+        else:
+            parameters = JointParameters.collection_defaults(len(legs), len(wheels))
         apply_video_recording(env_cfg, log_dir, args_cli, subdir="play")
         # create environment
         env: Any = gym.make(args_cli.task, cfg=env_cfg)
@@ -122,49 +137,108 @@ def main(argv: list[str] | None = None):
         # reset environment
         articulation = env.unwrapped.scene["robot"]
 
-        mapping = resolve_action_mapping(env.unwrapped, legs, wheels)
-        leg_ids, wheel_ids = mapping["leg_ids"], mapping["wheel_ids"]
-        joint_ids = torch.tensor(leg_ids + wheel_ids, device=env.unwrapped.device)
-        env_ids = torch.arange(env.unwrapped.num_envs, device=env.unwrapped.device)
-        delay_mode = env_cfg.sim2real.reference_delay_mode if replay else None
-        bias = _configure_joints(env, articulation, joint_ids, env_ids, parameters, delay_mode)
-        if reference is None:
-            leg_trajectory, wheel_trajectory = _chirp_targets(
-                args_cli, env.unwrapped.step_dt, joint_ids.device, len(legs), len(wheels)
-            )
-            initial_leg_position = leg_trajectory[0]
-            velocity = torch.zeros_like(bias)
+        if record is not None and (
+            record["schema_version"] == 3 or (tuple(legs), tuple(wheels)) != (task_legs, task_wheels)
+        ):
+            collected = _replay_selected(env, args_cli, record, parameters, legs, wheels, reference)
         else:
-            leg_trajectory = reference["des_dof_pos"]
-            wheel_trajectory = reference["des_dof_vel"] if wheels else None
-            initial_leg_position = reference["dof_pos"][0].to(joint_ids.device)
-            velocity = articulation.data.default_joint_vel.torch[:, joint_ids].clone()
-            if wheels:
-                velocity[:, len(legs) :] = reference["dof_vel"][0].to(joint_ids.device)
-                articulation.write_joint_position_to_sim_index(
-                    position=articulation.data.default_joint_pos.torch[:, wheel_ids].contiguous(),
-                    joint_ids=wheel_ids,
-                    env_ids=env_ids,
+            mapping = resolve_action_mapping(env.unwrapped, legs, wheels)
+            leg_ids, wheel_ids = mapping["leg_ids"], mapping["wheel_ids"]
+            joint_ids = torch.tensor(leg_ids + wheel_ids, device=env.unwrapped.device)
+            env_ids = torch.arange(env.unwrapped.num_envs, device=env.unwrapped.device)
+            delay_mode = env_cfg.sim2real.reference_delay_mode if replay else None
+            bias = _configure_joints(env, articulation, joint_ids, env_ids, parameters, delay_mode)
+            if reference is None:
+                leg_trajectory, wheel_trajectory = _chirp_targets(
+                    args_cli, env.unwrapped.step_dt, joint_ids.device, len(legs), len(wheels)
                 )
-        articulation.write_joint_position_to_sim_index(
-            position=(initial_leg_position + bias[:, : len(legs)]).contiguous(),
-            joint_ids=leg_ids,
-            env_ids=env_ids,
-        )
-        articulation.write_joint_velocity_to_sim_index(velocity=velocity, joint_ids=joint_ids, env_ids=env_ids)
-        collected = collect_trajectory(env, leg_trajectory, wheel_trajectory, bias[:, : len(leg_ids)])
+                initial_leg_position = leg_trajectory[0]
+                velocity = torch.zeros_like(bias)
+            else:
+                leg_trajectory = reference["des_dof_pos"]
+                wheel_trajectory = reference["des_dof_vel"] if wheels else None
+                initial_leg_position = reference["dof_pos"][0].to(joint_ids.device)
+                velocity = articulation.data.default_joint_vel.torch[:, joint_ids].clone()
+                if wheels:
+                    velocity[:, len(legs) :] = reference["dof_vel"][0].to(joint_ids.device)
+                    articulation.write_joint_position_to_sim_index(
+                        position=articulation.data.default_joint_pos.torch[:, wheel_ids].contiguous(),
+                        joint_ids=wheel_ids,
+                        env_ids=env_ids,
+                    )
+            articulation.write_joint_position_to_sim_index(
+                position=(initial_leg_position + bias[:, : len(legs)]).contiguous(),
+                joint_ids=leg_ids,
+                env_ids=env_ids,
+            )
+            articulation.write_joint_velocity_to_sim_index(velocity=velocity, joint_ids=joint_ids, env_ids=env_ids)
+            collected = collect_trajectory(env, leg_trajectory, wheel_trajectory, bias[:, : len(leg_ids)])
 
         # Kit may terminate Python when the launcher closes. Finish output inside its lifetime.
         cleanup.close()
         if reference is not None:
             errors = prediction_rmse(collected, reference)
-            print(f"Position prediction RMSE: {errors['dof_pos']:.8g} rad")
+            if legs:
+                print(f"Position prediction RMSE: {errors['dof_pos']:.8g} rad")
             if wheels:
                 print(f"Velocity prediction RMSE: {errors['dof_vel']:.8g} rad/s")
         if output is not None:
             _save_collection(collected, output)
         if args_cli.plot:
             _plot_collection(collected, legs, wheels, replay, reference)
+
+
+def _replay_groups(record, cfg, has_file):
+    task_groups = resolve_joint_groups(cfg)
+    if has_file:
+        groups = reference_groups(cfg)
+    elif record["schema_version"] == 3:
+        groups = (record.get("leg_order", ()), record.get("wheel_order", ()))
+    else:
+        groups = task_groups
+    for names, full in zip(groups, task_groups, strict=True):
+        if not isinstance(names, (list, tuple)) or any(n not in full for n in names) or len(set(names)) != len(names):
+            raise ValueError("Invalid result joint names for this task")
+        if record["schema_version"] == 2 and set(names) != set(full):
+            raise ValueError("Incompatible full-result joint groups")
+    if not any(groups):
+        raise ValueError("Empty result joint groups")
+    return tuple(groups[0]), tuple(groups[1])
+
+
+def _replay_selected(env, args, record, parameters, legs, wheels, reference):
+    base = env.unwrapped
+    control = SubsetControl(base, legs, wheels)
+    if record["schema_version"] == 3:
+        compare_replay_conditions(record["settings"], control.settings())
+    control.check_delay(parameters.delay_steps)
+    if reference is None:
+        pos, vel = _named_chirp(args, base.step_dt, base.device, legs, wheels)
+        first_pos = pos[0]
+        first_vel = None if vel is None else torch.zeros_like(vel[0])
+    else:
+        pos = reference.get("des_dof_pos", torch.empty((len(reference["time"]), 0))).to(base.device)
+        vel = reference["des_dof_vel"].to(base.device) if wheels else None
+        first_pos = reference["dof_pos"][0].to(base.device) if legs else pos[0]
+        first_vel = reference["dof_vel"][0].to(base.device) if wheels else None
+
+    def population(value):
+        return value.to(base.device).expand(base.num_envs, -1)
+
+    bias = population(parameters.bias[: len(legs)])
+    delay = torch.full((base.num_envs,), parameters.delay_steps, device=base.device, dtype=torch.long)
+    env.reset()
+    control.apply(
+        population(parameters.armature),
+        population(parameters.damping),
+        population(parameters.friction),
+        None if "newton" in type(control.robot).__module__ else population(parameters.dynamic_friction),
+        bias,
+        delay,
+        first_pos,
+        first_vel,
+    )
+    return collect_trajectory(env, pos, vel, bias, control=control)
 
 
 def _configure_joints(env, articulation, joint_ids, env_ids, parameters: JointParameters, delay_mode):
@@ -262,6 +336,21 @@ def _configure_joints(env, articulation, joint_ids, env_ids, parameters: JointPa
     return bias
 
 
+def _named_chirp(args, dt, device, legs, wheels):
+    """Select from the two calibrated task sweeps by exact joint name."""
+    x5_legs = [f"{side}_{kind}_joint" for side in ("FL", "FR", "RL", "RR") for kind in ("hip", "thigh", "calf")]
+    x5_wheels = [f"{side}_foot_joint" for side in ("FL", "FR", "RL", "RR")]
+    anymal_legs = [f"{side}_{kind}" for side in ("LF", "RF", "LH", "RH") for kind in ("HAA", "HFE", "KFE")]
+    for leg_order, wheel_order in ((x5_legs, x5_wheels), (anymal_legs, [])):
+        if set(legs) <= set(leg_order) and set(wheels) <= set(wheel_order):
+            pos, vel = _chirp_targets(args, dt, device, len(leg_order), len(wheel_order))
+            return (
+                pos[:, [leg_order.index(n) for n in legs]],
+                vel[:, [wheel_order.index(n) for n in wheels]] if vel is not None and wheels else None,
+            )
+    raise ValueError("No chirp coefficients for these joints; supply --trajectory_file")
+
+
 def _chirp_targets(args_cli, dt, device, num_legs, num_wheels):
     # Create a chirp signal for each action dimension
     duration = args_cli.duration  # seconds
@@ -341,7 +430,7 @@ def _plot_collection(collected, legs, wheels, replay, reference):
 
 
 @torch.inference_mode()
-def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
+def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias, *, control=None):
     """Collect pre-step measurements on-device, then transfer completed data once.
 
     Trajectories have shape [samples, joints]; bias is [environments, legs].
@@ -351,7 +440,11 @@ def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
     """
     base = getattr(env, "unwrapped", env)
     legs, wheels = resolve_joint_groups(base.cfg.sim2real)
-    mapping = resolve_action_mapping(base, legs, wheels)
+    mapping = control.mapping if control else resolve_action_mapping(base, legs, wheels)
+    leg_ids, wheel_ids = mapping["leg_ids"], mapping["wheel_ids"]
+    if control:
+        legs, wheels = control.legs, control.wheels
+        leg_ids, wheel_ids = control.leg_ids, control.wheel_ids
     robot = base.scene["robot"]
     if base.cfg.sim.use_newton_actuators:
         raise ValueError("Collection requires Python PACE actuators")
@@ -364,7 +457,8 @@ def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
     wheel_targets = (
         wheel_trajectory.to(device=base.device, dtype=torch.float32) if wheel_trajectory is not None else None
     )
-    actions = pack_actions(mapping, leg_targets, wheel_targets)
+    pos, vel = control.targets(leg_targets, wheel_targets) if control else (leg_targets, wheel_targets)
+    actions = pack_actions(mapping, pos, vel)
     if bias.shape != (base.num_envs, len(legs)) or bias.device != actions.device:
         raise ValueError("Encoder bias must match environment/leg dimensions and device")
     if not torch.isfinite(actions).all() or not torch.isfinite(bias).all():
@@ -395,13 +489,11 @@ def collect_trajectory(env, leg_trajectory, wheel_trajectory, bias):
     velocities[-1].copy_(robot.data.joint_vel.torch)
     if not (torch.isfinite(positions).all() & torch.isfinite(velocities).all()):
         raise RuntimeError("Nonfinite collection state")
-    recorded = {
-        "time": torch.tensor(timestamps, dtype=torch.float64),
-        "dof_pos": (positions[:-1, 0, mapping["leg_ids"]] - bias[0]).cpu(),
-        "des_dof_pos": leg_targets.cpu(),
-    }
+    recorded = {"time": torch.tensor(timestamps, dtype=torch.float64)}
+    if legs:
+        recorded.update(dof_pos=(positions[:-1, 0, leg_ids] - bias[0]).cpu(), des_dof_pos=leg_targets.cpu())
     if wheel_targets is not None:
-        recorded.update(dof_vel=velocities[:-1, 0, mapping["wheel_ids"]].cpu(), des_dof_vel=wheel_targets.cpu())
+        recorded.update(dof_vel=velocities[:-1, 0, wheel_ids].cpu(), des_dof_vel=wheel_targets.cpu())
     return recorded
 
 

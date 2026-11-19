@@ -47,8 +47,8 @@ class CMAESOptimizer:
         *,
         leg_order=None,
         wheel_order=None,
-        position_error_scale=1.0,
-        velocity_error_scale=1.0,
+        position_error_scale: float | list[float] = 1.0,
+        velocity_error_scale: float | list[float] = 1.0,
         position_weight=1.0,
         velocity_weight=1.0,
         reference_settings=None,
@@ -58,7 +58,7 @@ class CMAESOptimizer:
         self.joint_order = self.leg_order + self.wheel_order
         if (
             list(joint_order) != self.joint_order
-            or not self.leg_order
+            or not self.joint_order
             or len(set(self.joint_order)) != len(self.joint_order)
         ):
             raise ValueError("joint_order must contain unique leg_order + wheel_order")
@@ -110,7 +110,7 @@ class CMAESOptimizer:
         for field, width in [("dof_pos", num_legs), ("des_dof_pos", num_legs)] + (
             [("dof_vel", len(self.wheel_order)), ("des_dof_vel", len(self.wheel_order))] if self.wheel_order else []
         ):
-            if (
+            if width and (
                 field not in data
                 or data[field].shape != (self.num_samples, width)
                 or not torch.isfinite(data[field]).all()
@@ -157,7 +157,14 @@ class CMAESOptimizer:
         self.squared_errors = torch.zeros((population_size, num_joints), device=self.device, dtype=torch.float64)
         self.scores = torch.zeros(population_size, device=self.device, dtype=torch.float64)
         self._reset_population()
-        config = dict(schema_version=2, leg_order=self.leg_order, wheel_order=self.wheel_order)
+        self.save_reference_settings()
+
+    def save_reference_settings(self, settings=None):
+        """Persist the run configuration, including resolved physical conditions when supplied."""
+        if settings is not None:
+            self.settings.update(settings)
+        self.schema_version = 3 if "task_leg_order" in self.settings or not self.leg_order else 2
+        config = dict(schema_version=self.schema_version, leg_order=self.leg_order, wheel_order=self.wheel_order)
         self._atomic_save({**config, **self.data, **self.settings}, self.log_dir / "config.pt")
 
     def ask(self):
@@ -184,14 +191,19 @@ class CMAESOptimizer:
         Validate the complete chunk before changing buffers. Batched input keeps
         host synchronization and double-precision reduction outside simulation loops.
         """
-        if sim_dof_pos.ndim not in (2, 3):
+        response = sim_dof_pos if self.leg_order else sim_dof_vel
+        if response is None or response.ndim not in (2, 3):
             raise ValueError("Response shape must be [population, joints] or [population, samples, joints]")
-        batched = sim_dof_pos.ndim == 3
-        count = sim_dof_pos.shape[1] if batched else 1
+        batched = response.ndim == 3
+        count = response.shape[1] if batched else 1
         if count < 1 or self.scores_counter + count > self.num_samples:
             raise ValueError("More samples than reference trajectory or empty response")
         population, num_legs, num_wheels = self.population_size, len(self.leg_order), len(self.wheel_order)
-        groups = [(sim_dof_pos, real_dof_pos, num_legs)]
+        groups = []
+        if num_legs:
+            groups.append((sim_dof_pos, real_dof_pos, num_legs))
+        elif any(x is not None and x.numel() for x in (sim_dof_pos, real_dof_pos)):
+            raise ValueError("Velocity-only task received position data")
         if num_wheels:
             groups.append((sim_dof_vel, real_dof_vel, num_wheels))
         elif any(x is not None and x.numel() for x in (sim_dof_vel, real_dof_vel)):
@@ -205,11 +217,12 @@ class CMAESOptimizer:
             if not (torch.isfinite(simulated).all() & torch.isfinite(measured).all()):
                 raise ValueError("Nonfinite response")
         samples = slice(self.scores_counter, self.scores_counter + count)
-        q = sim_dof_pos if batched else sim_dof_pos.unsqueeze(1)
-        measured_q = real_dof_pos if batched else real_dof_pos.unsqueeze(1)
-        q = q - self.sim_params[:, None, self.bias_idx]
-        self.sim_dof_pos_buffer[:, samples] = q
-        self.squared_errors[:, :num_legs] += (q.double() - measured_q.double()).square().sum(dim=1)
+        if num_legs:
+            q = sim_dof_pos if batched else sim_dof_pos.unsqueeze(1)
+            measured_q = real_dof_pos if batched else real_dof_pos.unsqueeze(1)
+            q = q - self.sim_params[:, None, self.bias_idx]
+            self.sim_dof_pos_buffer[:, samples] = q
+            self.squared_errors[:, :num_legs] += (q.double() - measured_q.double()).square().sum(dim=1)
         if num_wheels:
             assert sim_dof_vel is not None and real_dof_vel is not None
             v = sim_dof_vel if batched else sim_dof_vel.unsqueeze(1)
@@ -224,9 +237,12 @@ class CMAESOptimizer:
         joint_mse = self.squared_errors / self.num_samples
         position_mse = joint_mse[:, : len(self.leg_order)]
         means = joint_mse.new_zeros((self.population_size, 2))
-        means[:, 0] = position_mse.mean(dim=1)
-        score = (position_mse / self.position_scale.square()).mean(dim=1) * self.weights[0]
-        weight = self.weights[0]
+        score = joint_mse.new_zeros(self.population_size)
+        weight = 0.0
+        if self.leg_order:
+            means[:, 0] = position_mse.mean(dim=1)
+            score = (position_mse / self.position_scale.square()).mean(dim=1) * self.weights[0]
+            weight = self.weights[0]
         if self.wheel_order:
             velocity_mse = joint_mse[:, len(self.leg_order) :]
             means[:, 1] = velocity_mse.mean(dim=1)
@@ -260,11 +276,12 @@ class CMAESOptimizer:
         self._log_generation(host_params, physical_mean, index, host_scores, host_means)
         if self.save_interval > 0 and generation % self.save_interval == 0:
             self._atomic_save(physical_mean, self.log_dir / f"mean_{generation:03d}.pt")
-        print(
-            f"Generation {self.iteration_counter}: best score={best_score:.6g}; position"
-            f" RMSE={host_means[index, 0].sqrt().item():.6g} rad; velocity"
-            f" RMSE={host_means[index, 1].sqrt().item():.6g} rad/s"
-        )
+        metrics = [f"Generation {self.iteration_counter}: best score={best_score:.6g}"]
+        if self.leg_order:
+            metrics.append(f"position RMSE={host_means[index, 0].sqrt().item():.6g} rad")
+        if self.wheel_order:
+            metrics.append(f"velocity RMSE={host_means[index, 1].sqrt().item():.6g} rad/s")
+        print("; ".join(metrics))
         self.iteration_counter += 1
         self.scores_counter = 0
         self.squared_errors.zero_()
@@ -309,7 +326,8 @@ class CMAESOptimizer:
         add_scalar("0_Episode/max_score", host_scores.max())
         add_scalar("0_Episode/diff_score", self._relative_spread)
         add_scalar("score/best", best_score)
-        add_scalar("error/position_rmse_rad", host_means[index, 0].sqrt())
+        if self.leg_order:
+            add_scalar("error/position_rmse_rad", host_means[index, 0].sqrt())
         if self.wheel_order:
             add_scalar("error/velocity_rmse_rad_s", host_means[index, 1].sqrt())
         writer = self.writer._get_file_writer()
@@ -324,7 +342,7 @@ class CMAESOptimizer:
         if self.separate_dynamic_friction:
             names += [f"friction_ratio:{n}" for n in self.joint_order]
         result = dict(
-            schema_version=2,
+            schema_version=self.schema_version,
             params=params,
             parameter_names=names,
             leg_order=self.leg_order,
@@ -334,15 +352,16 @@ class CMAESOptimizer:
             time=self.data["time"].double(),
             original_time=self.data.get("original_time", self.data["time"]).double(),
             reference={k: v for k, v in self.data.items() if k != "original_time"},
-            sim_dof_pos=self.sim_dof_pos_buffer[index].detach().cpu().clone(),
             score=score,
-            position_rmse=means[index, 0].sqrt().item(),
+            position_rmse=means[index, 0].sqrt().item() if self.leg_order else None,
             velocity_rmse=means[index, 1].sqrt().item() if self.wheel_order else None,
             settings=dict(self.settings),
             delay_candidate=delay,
             delay_steps=math.floor(delay),
             delay_seconds=math.floor(delay) * self.settings["dt"],
         )
+        if self.leg_order:
+            result["sim_dof_pos"] = self.sim_dof_pos_buffer[index].detach().cpu().clone()
         if self.wheel_order:
             result["sim_dof_vel"] = self.sim_dof_vel_buffer[index].detach().cpu().clone()
         return result

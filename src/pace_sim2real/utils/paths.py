@@ -7,6 +7,7 @@ from pathlib import Path
 
 # optional environment-variable override
 PACE_ROOT_ENV = "PACE_ROOT"
+ISAAC_COLLECTION_FILENAME = "chirp_data.pt"
 
 
 def project_root() -> Path:

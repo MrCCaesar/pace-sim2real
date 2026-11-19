@@ -6,6 +6,7 @@
 from typing import Any, cast
 
 import torch
+
 from isaaclab.assets import ArticulationCfg
 from isaaclab.utils import configclass
 
@@ -67,7 +68,6 @@ class SevnceX5PaceActionCfg:
 class SevnceX5PaceCfg(PaceCfg):
     """Pace configuration for Anymal-D robot."""
 
-    data_dir: str = "chirp_data.pt"  # located in pace_sim2real/data/Isaac-Pace-Sevnce-X5-v0/chirp_data.pt
     bounds_params: torch.Tensor = torch.zeros((61, 2))  # 3 * 16 + 12 leg biases + shared delay
     separate_dynamic_friction: bool = False  # appends 16 dynamic/static friction ratios
     leg_order: list[str] = [

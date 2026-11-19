@@ -993,3 +993,136 @@ def test_plot_mean_diagnostics_do_not_require_or_invent_paired_response(tmp_path
     with pytest.raises(SystemExit) as error:
         plotter.main(["--mean_name", "mean_000.pt", "--plot_trajectory"])
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "recorded, expected",
+    [
+        ((None, None), (("hip", "calf"), ("w1", "w2"))),
+        (([], None), ((), ("w1", "w2"))),
+        ((None, []), (("hip", "calf"), ())),
+        ((["calf"], ["w2", "w1"]), (("calf",), ("w2", "w1"))),
+        (([], ["w2"]), ((), ("w2",))),
+    ],
+)
+def test_subset_selection_projects_each_parameter_block(tmp_path, recorded, expected):
+    module = contracts()
+    cfg = SimpleNamespace(
+        leg_order=["hip", "calf"],
+        wheel_order=["w1", "w2"],
+        reference_leg_order=recorded[0],
+        reference_wheel_order=recorded[1],
+        separate_dynamic_friction=True,
+        bounds_params=torch.arange(38).reshape(19, 2),
+        cmaes=SimpleNamespace(position_error_scale=[11, 12], velocity_error_scale=[21, 22]),
+    )
+    assert module.reference_groups(cfg) == expected
+    legs, wheels = expected
+    bounds, pscale, vscale = module.selected_fit_config(cfg, legs, wheels)
+    lookup = {"hip": 0, "calf": 1, "w1": 2, "w2": 3}
+    selected = [lookup[n] for n in legs + wheels]
+    row_ids = [offset + i for offset in (0, 4, 8) for i in selected] + [12 + lookup[n] for n in legs] + [14]
+    row_ids += [15 + i for i in selected]
+    torch.testing.assert_close(bounds, cfg.bounds_params[row_ids])
+    assert pscale == [11 + lookup[n] for n in legs]
+    assert vscale == [19 + lookup[n] for n in wheels]
+    data = {"time": torch.tensor([0.0, 0.01])}
+    for suffix, names in (("pos", legs), ("vel", wheels)):
+        if names:
+            data["dof_" + suffix] = data["des_dof_" + suffix] = torch.rand(2, len(names))
+    path = tmp_path / "ref.pt"
+    torch.save(data, path)
+    loaded = module.load_reference_data(path, cfg, 0.01)
+    for k in data.keys() - {"time"}:
+        torch.testing.assert_close(loaded[k], data[k])
+
+
+@pytest.mark.parametrize("legs,wheels", [([], []), (["w"], []), (["p", "p"], []), ([], ["unknown"])])
+def test_invalid_recorded_groups(legs, wheels):
+    cfg = SimpleNamespace(leg_order=["p"], wheel_order=["w"], reference_leg_order=legs, reference_wheel_order=wheels)
+    with pytest.raises(ValueError):
+        contracts().reference_groups(cfg)
+
+
+def test_velocity_only_objective_and_diagnostics(tmp_path):
+    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+    optimizer = load_module("velocity_subset_optimizer", "src/pace_sim2real/optim/cma_es.py")
+    plot = load_module("velocity_subset_plot", "scripts/pace/plot_trajectory.py")
+    data = {"time": torch.tensor([0.0, 0.01]), "dof_vel": torch.zeros(2, 1), "des_dof_vel": torch.ones(2, 1)}
+    settings = dict(
+        dt=0.01,
+        task_leg_order=["p"],
+        task_wheel_order=["w"],
+        hold_positions={"p": 0.4},
+        hold_velocities={},
+        delay_actuator_groups={"drive": ["p", "w"]},
+    )
+    opt = optimizer.CMAESOptimizer(
+        torch.zeros(4, 2),
+        2,
+        str(tmp_path),
+        ["w"],
+        1,
+        data,
+        "cpu",
+        leg_order=[],
+        wheel_order=["w"],
+        reference_settings=settings,
+        velocity_error_scale=[2.0],
+        velocity_weight=3.0,
+    )
+    v = torch.tensor([[[2.0], [4.0]], [[6.0], [8.0]]])
+    opt.tell(None, None, sim_dof_vel=v, real_dof_vel=torch.zeros_like(v))
+    opt.evolve()
+    opt.close()
+    best = plot.load_result(opt.log_dir / "best_result.pt")
+    assert best["schema_version"] == 3 and best["position_rmse"] is None and "sim_dof_pos" not in best
+    assert best["parameter_names"] == ["armature:w", "damping:w", "friction:w", "delay"]
+    assert best["score"] == pytest.approx(2.5)
+    assert best["velocity_rmse"] == pytest.approx(10**0.5)
+    tags = EventAccumulator(str(opt.log_dir)).Reload().Tags()["scalars"]
+    assert "error/position_rmse_rad" not in tags and "error/velocity_rmse_rad_s" in tags
+    assert not any(tag.startswith("4_Bias/") for tag in tags)
+
+
+def test_subset_keeps_default_mechanics_and_restores_each_drive(monkeypatch):
+    from unittest.mock import Mock
+
+    module = contracts()
+    monkeypatch.setitem(sys.modules, "drive_test.collection_contracts", module)
+    subset = load_module("drive_test.subset_control", "src/pace_sim2real/utils/subset_control.py")
+    monkeypatch.setattr(subset, "resolve_action_mapping", lambda *_: {"leg_ids": [0, 2], "wheel_ids": [1, 3]})
+    names = ["p1", "w1", "p2", "w2"]
+    robot = Mock(num_joints=4, joint_names=names)
+    robot.data.default_joint_pos.torch = torch.tensor([[1.0, 2.0, 3.0, 4.0]]).repeat(2, 1)
+    robot.data.default_joint_vel.torch = torch.tensor([[5.0, 6.0, 7.0, 8.0]]).repeat(2, 1)
+    robot.actuators = {}
+    for side, indices in (("A", [1, 0]), ("B", [2, 3])):
+        drive = Mock(joint_indices=indices, encoder_bias=torch.tensor([[0.1, 0.25]]).repeat(2, 1))
+        drive.cfg = SimpleNamespace(delay_mode="command", max_delay=4)
+        robot.actuators[side] = drive
+    cfg = SimpleNamespace(leg_order=["p1", "p2"], wheel_order=["w1", "w2"], reference_delay_mode="command")
+    control = subset.SubsetControl(
+        SimpleNamespace(scene={"robot": robot}, cfg=SimpleNamespace(sim2real=cfg), device="cpu", num_envs=2), [], ["w1"]
+    )
+    pos, vel = control.targets(torch.empty(3, 0), torch.tensor([[10.0], [11.0], [12.0]]))
+    torch.testing.assert_close(pos, torch.tensor([[0.75, 2.9]]).repeat(3, 1))
+    torch.testing.assert_close(vel, torch.tensor([[10.0, 8.0], [11.0, 8.0], [12.0, 8.0]]))
+    assert control.settings()["delay_actuator_groups"] == {"A": ["w1", "p1"]}
+    for candidate in (1, 3):
+        values = torch.full((2, 1), float(candidate))
+        delay = torch.tensor([candidate, candidate + 1])
+        control.apply(values, values, values, None, torch.empty(2, 0), delay, torch.empty(2, 0), values)
+        a, b = robot.actuators.values()
+        torch.testing.assert_close(a.update_time_lags.call_args.args[0], delay)
+        torch.testing.assert_close(a.update_encoder_bias.call_args.args[0], torch.tensor([[0.0, 0.25]]).repeat(2, 1))
+        b.update_time_lags.assert_not_called()
+        b.update_encoder_bias.assert_not_called()
+        for writer in (robot.write_joint_armature_to_sim_index, robot.write_joint_friction_coefficient_to_sim_index):
+            assert writer.call_args.kwargs["joint_ids"].tolist() == [1]
+        q = robot.write_joint_position_to_sim_index.call_args.kwargs
+        v = robot.write_joint_velocity_to_sim_index.call_args.kwargs
+        assert q["joint_ids"].tolist() == [0, 2, 1, 3]
+        torch.testing.assert_close(q["position"], torch.tensor([[1.0, 3.0, 2.0, 4.0]]).repeat(2, 1))
+        torch.testing.assert_close(v["velocity"], torch.tensor([[0.0, 0.0, float(candidate), 8.0]]).repeat(2, 1))

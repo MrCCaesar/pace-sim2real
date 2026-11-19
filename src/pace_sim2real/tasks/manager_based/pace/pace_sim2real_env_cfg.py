@@ -6,8 +6,9 @@
 import warnings
 from dataclasses import MISSING
 
-import isaaclab.sim as sim_utils
 import torch
+
+import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 
@@ -34,7 +35,10 @@ from isaaclab_newton.physics import (
 )
 from isaaclab_ov.physics import OvPhysxCfg
 from isaaclab_physx.physics import PhysxCfg
+
 from isaaclab_tasks.utils import PresetCfg
+
+from pace_sim2real.utils.paths import ISAAC_COLLECTION_FILENAME
 
 from . import mdp
 
@@ -178,6 +182,7 @@ class PaceCfg:
     """Overall configuration for Pace Sim2Real task."""
 
     cmaes: CMAESOptimizerCfg = CMAESOptimizerCfg()
+    # Each reference group independently declares file columns: None = full group, [] = absent.
     reference_leg_order: list[str] | None = None
     reference_wheel_order: list[str] | None = None
     reference_bias_model: str = "feedback_and_measurement"
@@ -185,7 +190,7 @@ class PaceCfg:
     time_mode: str = "strict"
     legacy_sample_dt: float | None = None
 
-    data_dir: str = MISSING
+    data_dir: str = ISAAC_COLLECTION_FILENAME
     joint_order: list = MISSING
     leg_order: list = MISSING
     wheel_order: list | None = None
