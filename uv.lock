@@ -4148,6 +4148,7 @@ dependencies = [
     { name = "cmaes" },
     { name = "isaaclab-dev" },
     { name = "psutil" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -4257,6 +4258,7 @@ requires-dist = [
     { name = "isaaclab-dev", extras = ["viser"], marker = "extra == 'viser'", editable = "../IsaacLab" },
     { name = "isaaclab-dev", extras = ["wandb"], marker = "extra == 'wandb'", editable = "../IsaacLab" },
     { name = "psutil" },
+    { name = "scipy" },
 ]
 provides-extras = ["all", "dev", "importers", "isaacsim", "leapp", "mimic", "ov", "ovphysx", "ovrtx", "rerun", "rl-games", "rlinf", "rsl-rl", "sb3", "skrl", "skrl-jax", "teleop", "test", "tetrahedralization", "torchrl", "video", "viser", "wandb"]
 

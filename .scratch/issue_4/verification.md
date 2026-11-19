@@ -396,3 +396,32 @@ PACE_RUN_REPLAY_INTEGRATION=1 PACE_RUN_SUBSET_INTEGRATION=1 .venv/bin/python -m 
 结果：全套 150 项通过（317.43 秒，4 条既有 CMA 警告），含此前失败的三项。原生输出/绘图两项补测通过。临时目录下的 16 帧 X5 原生采集成功，以任务相对文件名拟合后，结果内的时间、实测与期望共五个张量和原文件一致。两种任务配置的默认输入均为 chirp_data.pt。六份原有实验文件的 SHA-256 检验通过。
 
 本次涉及的 Python 文件通过 Ruff，采集、拟合入口及路径模块的 Pyright 检查为零错误。将共享任务配置纳入 Pyright 时有 5 项既有 Isaac Lab 类型诊断；用相同环境核对基点该文件为 6 项。
+
+## CR5 离线采集数据滤波验收
+
+**结论。** 用户批准进入 Verify 后，在当前工作区重新执行 CR5 专项 CPU 回归，24 项通过，0 项跳过（1.44 s）。[CR5-A1–A4](spec.md#cr5--离线采集数据滤波--specifyapproved) 全部通过。
+
+| 条件 | 本轮证据 |
+| --- | --- |
+| A1 · 文件和关节列 | 纯位置、纯速度、混合及显式空列组用例通过。实际 X5 默认 20 Hz 与显式 25 Hz 输出经拟合加载器读回，均为 8000 帧、12 列腿位置和 4 列轮速。两份输出均与原始字典字段及顺序、形状、dtype 一致，时间与指令逐元素相等。全部 16 列测量在转换为原 dtype 后分别与独立逐列 SciPy 滤波结果逐元素相等。另在副本中仅改变一个腿关节的一个输入样本，只有对应输出列变化。 |
+| A2 · 合成信号 | 对 0.1、1、4、8、10 Hz 五个频点，中段最大幅值损失为 0.37031%（限值 1%），最大相位折算时差变化为 0.01644 ms（限值 0.1 ms）。中段 RMSE 从 0.16079 降至 0.03580，为原值的 22.27%；首尾 RMSE 从 0.16222 降至 0.04327，为原值的 26.67%（分别要求 ≤35%）。以上数值从本轮 pytest 写出的输入和滤后文件按 Research 的时间窗重新计算。 |
+| A3 · 指定 X5 记录 | 四阶 20 Hz 下，腿位置和轮速在入选频点的最大幅值变化分别为 0.159%、0.151%（限值 1%）。各组中 ≥30 Hz 能量的最小降幅分别为 47.66、47.86 dB（要求 ≥40 dB）。腿位置首帧、末帧的最大绝对变化分别为 0.00225、0.00986 rad；轮速分别为 0.01093、0.35371 rad/s。原件和临时输入副本校验均得到研究指定的 SHA-256 `8ab1ca9e3a430c0b4ad7fa951cf53dbc352d8e45263b6ee085bc300aa25732d8`。 |
+| A4 · 命令与错误处理 | 两个独立进程执行 README 中默认参数和显式四阶 25 Hz 的滤波命令，分别生成同目录的 `*_filtered.pt` 和指定文件 `x5_25Hz.pt`。测试还覆盖一、二、三阶、截止频率及阶数错误、时间与张量无效、过短输入、已有文件及输入别名、模拟写入失败后的清理。 |
+
+**执行命令。** 工作目录为项目根目录。命令行复验使用已安装的项目环境，将样例复制到临时目录。两个输出均调用 `load_reference_data`，按 X5 的完整关节序和 0.0025 s 间隔核对。
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -s tests/test_filter_chirp_data.py
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 UV_NO_SYNC=1
+task=Isaac-Pace-Sevnce-X5-v0
+trial=/tmp/pace-cr5-verify-vhsouwsJ
+record=$trial/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt
+cp data/$task/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt "$record"
+uv run python scripts/pace/filter_chirp_data.py "$record"
+uv run python scripts/pace/filter_chirp_data.py "$record" --cutoff_hz 25 --order 4 --output "$trial/x5_25Hz.pt"
+sha256sum "$record" "data/$task/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt"
+```
+
+`uv lock --check --offline`、`.venv/bin/ruff check scripts/pace/filter_chirp_data.py tests/test_filter_chirp_data.py`、相同文件的 `.venv/bin/ruff format --check` 和 `uvx --offline pyright --pythonpath .venv/bin/python scripts/pace/filter_chirp_data.py tests/test_filter_chirp_data.py` 均通过。
+
+**边界与交付。** 真实数据缺少无噪声参考，本轮核对到拟合数据加载入口，未运行参数优化或仿真。提交时已显式纳入 `tests/test_filter_chirp_data.py`，提交前复跑 24 项专项测试全部通过。

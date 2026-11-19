@@ -1,6 +1,8 @@
 # Issue #4 — Status
 
-Current stage: CR4 Verify 及文件名约定后续修订已完成。#17–#21 软件验收通过，原有三项路径差异已解决。两类集成用例同时启用后，全套 150 项通过。Isaac Lab 默认采集和拟合使用 chirp_data.pt；X5 原生 MuJoCo 采集使用 mujoco_chirp_data.pt，已验证直接指定该文件拟合。
+Current stage: CR5 Verify 已完成。CR5-A1–A4 全部通过，24 项专项测试全部执行，真实 X5 的两份临时输出均通过拟合加载器。数值与端点观察见 [CR5 验收记录](verification.md#cr5-离线采集数据滤波验收)。新增回归文件随滤波功能一并纳入版本控制。
+
+Previous stage: CR4 Verify 及文件名约定后续修订已完成。#17–#21 软件验收通过，原有三项路径差异已解决。两类集成用例同时启用后，全套 150 项通过。Isaac Lab 默认采集和拟合使用 chirp_data.pt；X5 原生 MuJoCo 采集使用 mujoco_chirp_data.pt，已验证直接指定该文件拟合。
 
 本地提交记录：生成文件清理 `5ad5f80`，X5 腿关节增益调整 `8a5fdf5`，原生 MuJoCo 任务输出路径及回归 `25fc9ba`，部分关节拟合与回放 `e1eaa3e`。提交前运行默认 pytest：144 项通过，8 项按需启用的 X5 集成测试跳过，4 条已有 CMA 警告。
 

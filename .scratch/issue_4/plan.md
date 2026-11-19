@@ -379,3 +379,24 @@ Post-implementation user amendment executed within existing files: config-owned 
 - 实际部分关节仿真使用 Newton MJWarp。PhysX 的摩擦比例布局和解码由 CPU 回归覆盖。正式 Verify 仍待批准。
 
 CR4 正式 Verify 已完成。逐工单证据、数值、全量回归三项失败的归因见 [验证记录](verification.md)。
+
+## CR5 · 离线采集数据滤波 · Plan（Approved）
+
+本计划落实已批准的 [Q3–Q5 与 CR5-A1–A4](spec.md#cr5--离线采集数据滤波--specifyapproved)、[文件和命令行接口](interfaces.md#cr5--离线滤波接口approved)及 [ADR 0014](../../adr/0014-offline-measurement-filter.md)。建议按以下三项交付。
+
+| 任务 | 前置 | 交付物与完成条件 |
+| --- | --- | --- |
+| CR5-T1 · 从采集文件生成滤波副本 | 无 | 实现 `scripts/pace/filter_chirp_data.py` 的完整命令行；在 `pyproject.toml` 中声明 SciPy 直接依赖并同步锁文件，沿用现有版本。覆盖默认四阶 20 Hz、显式阶数与截止频率、时间及张量校验、文件保护与失败退出。新增 `tests/test_filter_chirp_data.py`，通过 CLI 测试纯位置、纯速度、混合列、缺省或显式空列组。与逐列 SciPy 结果对照，核对原始文件摘要、字段顺序、形状、dtype、指令值以及拟合加载器读取结果。覆盖已有输出、输入别名、写入失败、异常时间和短记录。对应 A1、A4。 |
+| CR5-T2 · 用已知真值验证幅值、时差及降噪 | T1 | 在同一测试文件固化 Research 的 400 Hz 五列合成信号、固定种子、10 ms 延迟及计算窗口。用默认 CLI 生成输出并逐频核对中段幅值损失 ≤1%、滤波前后的相位折算时差变化 ≤0.1 ms；中段及首尾 RMSE 分别 ≤ 滤前对应值的 35%。该回归应能仅依靠仓库内容在 CPU 上复现。对应 A2。 |
+| CR5-T3 · 真实 X5 文件验收用例与中文用法 | T1；可与 T2 并行 | 在同一测试文件增加 X5 样例用例，对指定摘要的原始文件运行 CLI，将输出写到临时目录，再用现有拟合加载器读取。按 Research 的选频规则逐关节验证幅值变化 ≤1%、≥30 Hz 能量降幅 ≥40 dB，分别报告首末帧腿位置和轮速的最大绝对改变量。更新根目录 `README.md`，给出默认命令、四阶 25 Hz 加显式输出路径的示例，以及通过 `env.sim2real.data_dir` 选择结果的方法。对应 A1、A3、A4。 |
+
+**验收资料与前提。** 已核实指定 X5 样例在本机可读，SHA-256 为 `8ab1ca9e3a430c0b4ad7fa951cf53dbc352d8e45263b6ee085bc300aa25732d8`，与 Research 一致；该文件未纳入 Git。T1、T2 的常规回归使用生成的张量。正式 Verify 须用匹配摘要的真实样例执行 T3；缺少样例时记录 A3 待验。[研究测量方法及基线](research.md#cr5-临时实验结果research已执行)
+
+**Verify 交接。** 用户已批准三项任务并进入 Implement。三项实现完成并获准进入 Verify 后，执行 `.venv/bin/python -m pytest -q tests/test_filter_chirp_data.py`，确认真实样例用例实际运行，核对 README 中的默认和显式命令。将命令、逐项通过情况、数值和端点观察记入 `verification.md`。
+
+### CR5 Implement 交接
+
+- T1 已实现 `scripts/pace/filter_chirp_data.py`。现有锁文件中 SciPy 1.17.0 改为直接依赖，`uv lock --check --offline` 通过。输出文件以独占创建方式打开，同名并发写入、已有文件及输入别名均受保护；保存或关闭失败时清理本次创建的文件。
+- T2、T3 的 CPU 用例位于 `tests/test_filter_chirp_data.py`。执行 `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q tests/test_filter_chirp_data.py tests/test_mixed_collection_fit.py::test_reference_loader_requires_explicit_legacy_time_and_bias_provenance`，25 项通过，含真实 X5 样例。逐列统计的最大通带幅值变化为腿位置 0.159%、轮速 0.151%；≥30 Hz 最小能量降幅分别为 47.66、47.86 dB。首/末帧最大改变量分别为腿位置 0.00225/0.00986 rad，轮速 0.01093/0.35371 rad/s。
+- README 已加入默认和显式参数示例。另在临时目录复制真实 X5 输入，分别执行 `uv run --no-sync python scripts/pace/filter_chirp_data.py "$record"` 及带 `--cutoff_hz 25 --order 4 --output "$out"` 的命令。两个进程均成功，`load_reference_data` 读回两份文件均为 8000 帧、12 列位置和 4 列速度，且两组参数产生的滤后位置有差异。
+- 对上述新增脚本和测试执行 `.venv/bin/ruff check`、`.venv/bin/ruff format --check` 和 `uvx --offline pyright --pythonpath .venv/bin/python`，均通过。

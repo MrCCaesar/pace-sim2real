@@ -21,6 +21,7 @@ dependencies = [
     "isaaclab-dev",
     "cmaes",
     "psutil",
+    "scipy",
 ]
 
 [project.entry-points."isaaclab.tasks"]

@@ -308,3 +308,20 @@ Q7–Q9 已确认。未记录位置关节取物理初角等于编码器保持角
 ### 采集与拟合默认文件名（Verify 后用户确认）
 
 两个来源共用项目根或 `PACE_ROOT` 下的 `data/<规范化任务名>/` 目录。Isaac Lab 固定采集写入 `chirp_data.pt`，也是 `PaceCfg.data_dir` 的默认值。原生 X5 MuJoCo 写入 `data/Isaac-Pace-Sevnce-X5-v0/mujoco_chirp_data.pt`。从该记录拟合时给出 `env.sim2real.data_dir=mujoco_chirp_data.pt`。频率、增益和时长变化时文件名保持稳定，成功采集替换同来源的默认记录。回放另存时保护对应任务的默认采集文件和显式输入。此前按实验命名的文件仍可通过相对或绝对路径选择。
+
+## CR5 · 离线滤波接口（Approved）
+
+**项目命令行。** 已批准的入口为 `uv run python scripts/pace/filter_chirp_data.py INPUT [--output PATH] [--cutoff_hz HZ] [--order N]`。离线读取 CPU 张量，输出一个可由现有 `load_reference_data` 读取的采集文件。路径相对当前工作目录解释。
+
+| 参数 | 类型及默认 | 约束及单位 |
+| --- | --- | --- |
+| `INPUT` | 必填文件路径 | 已存在的 PACE 采集张量字典 |
+| `--output` | 可选文件路径；默认同目录的 `<输入文件主名>_filtered.pt` | 目标父目录存在，目标是新文件。已有目标及输入路径别名均报错。写入失败时保留输入和原有目标，清理未完成的输出。 |
+| `--cutoff_hz` | 浮点数，20.0 | 有限且严格位于 (0, fs/2)，单位 Hz，表示 Butterworth **单程**临界频率 |
+| `--order` | 正整数，4 | 单程阶数；还须满足当前记录长度与该阶数的默认延拓要求 |
+
+**输入张量。** 项目原有字段为 `time[T]`（秒）、位置对 `dof_pos[T,L]` / `des_dof_pos[T,L]`（rad）、速度对 `dof_vel[T,W]` / `des_dof_vel[T,W]`（rad/s）。至少一组有记录，另一组可以缺省或以一对零列张量保留。每组的两个字段成对、同形；所有字段均为有限浮点张量。按原任务的关节局部坐标和列序处理。未知字段、非配对字段、非有限数、维度错误均报错。时间须严格递增并近似均匀。以 `dt=(time[-1]-time[0])/(T-1)`（float64 秒）和 `fs=1/dt` 定义采样率；逐间隔允许偏差为 `1e-7 秒 + 0.001*dt`。该容差允许浮点时间量化，同时拒绝缺帧造成的整步跳变。输入时间以秒计，未声明真实采样间隔的历史索引不在本契约的时间语义内。
+
+**计算与输出。** SciPy 已有 API 为 `butter(order, cutoff_hz, btype="lowpass", fs=fs, output="sos")` 和 `sosfiltfilt(sos, measurements, axis=0, padtype="odd")`。以 float64 计算有记录的实测组，然后转换回各自原始 dtype，检查转换后结果有限。空列组原样保留。保持字典字段及其顺序；时间和指令直接复制。成功退出码为 0，并打印输出路径；参数、格式、延拓长度或文件操作失败时以非零状态退出并说明原因。库的数值接口与项目的 CLI 分属不同层级，本契约以 CLI 作为新增的公共接口。
+
+**样例。** 在项目根目录运行 `uv run python scripts/pace/filter_chirp_data.py data/Isaac-Pace-Sevnce-X5-v0/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt`。完成后，拟合命令可通过 `env.sim2real.data_dir=mujoco_0.1_10Hz_kp1500_kd30_chirp_data_filtered.pt` 选择同一任务目录下的结果。
