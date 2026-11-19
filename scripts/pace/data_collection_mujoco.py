@@ -16,6 +16,7 @@ from mujoco_collection import collect, load_config, plot_data, save_data
 def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task", type=str, default="Isaac-Pace-Sevnce-X5-v0")
     parser.add_argument("--config", type=Path, default=root / "config/x5_collection.toml")
     parser.add_argument("--min_frequency", type=float)
     parser.add_argument("--max_frequency", type=float)
@@ -35,7 +36,11 @@ def main(argv: list[str] | None = None) -> int:
         config = replace(config, **overrides)
         data = collect(config)
         output_root = Path(os.environ.get("PACE_ROOT", str(root))).expanduser().resolve()
-        output = output_root / "data/x5_sim/chirp_data.pt"
+        output = (
+            output_root / "data" / args.task / "mujoco_chirp_data.pt"
+            if args.task
+            else output_root / "data" / "mujoco_chirp_data.pt"
+        )
         save_data(data, output)
         print(f"Saved {len(data.time)} samples to {output}")
         if config.plot:

@@ -17,6 +17,10 @@ sys.path.insert(0, str(ROOT / "scripts" / "pace"))
 from mujoco_collection import collect, load_config, save_data  # noqa: E402
 
 
+def native_dataset_path(output_root: Path, task: str = "Isaac-Pace-Sevnce-X5-v0") -> Path:
+    return output_root / "data" / task / "mujoco_chirp_data.pt"
+
+
 def config_file(tmp_path, **values):
     """Isolate run options from the user's editable default configuration."""
     import re
@@ -165,6 +169,9 @@ def test_cli_saves_short_run_from_foreign_cwd_without_isaaclab_or_plotting(tmp_p
     import torch
 
     output_root = tmp_path / "output"
+    lab_data = native_dataset_path(output_root).with_name("chirp_data.pt")
+    lab_data.parent.mkdir(parents=True)
+    lab_data.write_bytes(b"existing Isaac Lab recording")
     env = dict(os.environ, PACE_ROOT=str(output_root))
     command = [
         sys.executable,
@@ -176,9 +183,23 @@ def test_cli_saves_short_run_from_foreign_cwd_without_isaaclab_or_plotting(tmp_p
     ]
     completed = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
-    data = torch.load(output_root / "data/x5_sim/chirp_data.pt", weights_only=True)
+    assert lab_data.read_bytes() == b"existing Isaac Lab recording"
+    data = torch.load(native_dataset_path(output_root), weights_only=True)
     assert data["dof_pos"].shape == (4, 12)
     assert data["dof_vel"].shape == (4, 4)
+
+
+@pytest.mark.parametrize("task", ["X5-calibration", ""], ids=["named-task", "empty-task"])
+def test_cli_reads_saved_dataset_for_explicit_task(native_config, tmp_path, monkeypatch, task):
+    import torch
+    from data_collection_mujoco import main
+
+    monkeypatch.setenv("PACE_ROOT", str(tmp_path))
+    config = config_file(tmp_path, path=f'"{native_config.model_path}"')
+    assert main(["--config", str(config), "--duration", ".01", "--task", task]) == 0
+    saved = torch.load(native_dataset_path(tmp_path, task), weights_only=True)
+    assert saved["time"].shape == (4,)
+    assert not native_dataset_path(tmp_path).exists()
 
 
 @pytest.mark.parametrize(
@@ -303,7 +324,7 @@ def test_cli_failure_does_not_touch_existing_data(native_config, tmp_path, monke
     )
     path = tmp_path / "config.toml"
     path.write_text(source)
-    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output = native_dataset_path(tmp_path)
     output.parent.mkdir(parents=True)
     output.write_bytes(b"old")
     monkeypatch.setenv("PACE_ROOT", str(tmp_path))
@@ -394,13 +415,13 @@ def test_plot_failure_happens_after_save(tmp_path, monkeypatch):
     monkeypatch.setenv("PACE_ROOT", str(tmp_path))
 
     def fail_show():
-        assert (tmp_path / "data/x5_sim/chirp_data.pt").exists()
+        assert native_dataset_path(tmp_path).exists()
         raise RuntimeError("injected display failure")
 
     monkeypatch.setattr(plt, "show", fail_show)
     try:
         assert main(["--duration", ".0025", "--plot"]) == 1
-        saved = torch.load(tmp_path / "data/x5_sim/chirp_data.pt", weights_only=True)
+        saved = torch.load(native_dataset_path(tmp_path), weights_only=True)
         assert saved["dof_pos"].shape == (1, 12)
     finally:
         plt.close("all")
@@ -568,7 +589,7 @@ def test_viewer_failure_preserves_existing_output(native_config, child_gui, monk
     monkeypatch.setattr(mujoco_viewer, "TERMINATE_TIMEOUT", 0.1)
     monkeypatch.setattr(mujoco_viewer, "KILL_TIMEOUT", 0.5)
     path = config_file(tmp_path, path=f'"{native_config.model_path}"')
-    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output = native_dataset_path(tmp_path)
     output.parent.mkdir(parents=True)
     output.write_bytes(b"previous dataset")
     monkeypatch.setenv("PACE_ROOT", str(tmp_path))
@@ -589,7 +610,7 @@ def test_ctrl_c_with_active_viewer_preserves_output(native_config, child_gui, mo
 
     monkeypatch.setattr(mj, "mj_step", interrupt)
     path = config_file(tmp_path, path=f'"{native_config.model_path}"')
-    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output = native_dataset_path(tmp_path)
     output.parent.mkdir(parents=True)
     output.write_bytes(b"previous dataset")
     monkeypatch.setenv("PACE_ROOT", str(tmp_path))
@@ -676,7 +697,7 @@ def test_ctrl_c_during_cleanup_escalation_still_reaps_child(native_config, child
 
     monkeypatch.setattr(BaseProcess, "join", interrupt_terminate_wait)
     path = config_file(tmp_path, path=f'"{native_config.model_path}"')
-    output = tmp_path / "data/x5_sim/chirp_data.pt"
+    output = native_dataset_path(tmp_path)
     output.parent.mkdir(parents=True)
     output.write_bytes(b"previous dataset")
     monkeypatch.setenv("PACE_ROOT", str(tmp_path))
