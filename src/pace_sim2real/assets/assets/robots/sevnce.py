@@ -31,7 +31,7 @@ HEALTHCARE_S3 = "https://omniverse-content-production.s3-us-west-2.amazonaws.com
 ##
 
 
-SEVNCE_X3MINI_DIFFDRIVE_CFG = ArticulationCfg(
+SEVNCE_X3MINI_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{CUSTOM_ROBOTS_ASSETS_DIR}/robots/sevnce/x3mini/usd/x3mini.usd",
         activate_contact_sensors=True,

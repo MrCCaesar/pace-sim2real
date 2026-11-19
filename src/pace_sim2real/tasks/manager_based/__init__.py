@@ -17,3 +17,10 @@ gym.register(
     disable_env_checker=True,
     kwargs={"env_cfg_entry_point": f"{__name__}.pace.sevnce_pace_env_cfg:SevnceX5PaceEnvCfg"},
 )
+
+gym.register(
+    id="Isaac-Pace-Sevnce-X3mini-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.pace.sevnce_pace_env_cfg:SevnceX3miniPaceEnvCfg"},
+)

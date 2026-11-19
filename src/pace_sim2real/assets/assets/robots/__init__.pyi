@@ -5,9 +5,9 @@
 
 __all__ = [
     "DEEPROBOTICS_M20_CFG",
-    "SEVNCE_X3MINI_DIFFDRIVE_CFG",
+    "SEVNCE_X3MINI_CFG",
     "SEVNCE_X5_CFG",
 ]
 
 from .deeprobotics import DEEPROBOTICS_M20_CFG
-from .sevnce import SEVNCE_X3MINI_DIFFDRIVE_CFG, SEVNCE_X5_CFG
+from .sevnce import SEVNCE_X3MINI_CFG, SEVNCE_X5_CFG
