@@ -122,6 +122,22 @@ uv run python scripts/pace/fit.py --task "$task" env.sim2real.data_dir=mujoco_0.
 
 `--analysis_band_hz LOW HIGH` 默认取 0.1–10 Hz，只控制频域幅值和时差的分析范围。报告给出有效关节数，两项频域极值还列出有效的关节与频点组合数和频率范围。分母为零、缺少有效频点等情况显示 `N/A` 与原因。默认仅打印；加 `--plot` 后可按组和列号交互查看期望、滤前、滤后三条时间曲线，以及滤前测量在完整可观测频段的单边幅值谱。
 
+## 从实机 CSV 转换参考数据
+
+每行对应一个控制周期。`time_s` 单位为秒，每个记录关节需要 `<关节名>.feedback_valid`，位置关节需要 `q/q_des`（rad），速度关节需要 `dq/dq_des`（rad/s）。字段均以关节名和点号为前缀。任务配置决定物理量和输出列序。默认在 CSV 旁生成 `chirp_data.pt`，已有文件时用 `--output wheels.pt` 另存。首尾无效反馈可裁去，保留段中间缺反馈会报告源行和关节。
+
+以下模拟样例的四个轮名属于 X3mini，采样周期为 2 ms。转换器会打印实际参考列序和周期，拟合时将这些值传给同一任务。
+
+```bash
+csv=data/Isaac-Pace-Sevnce-X5-v0/motor_sweep_simulated/data.csv
+task=Isaac-Pace-Sevnce-X3mini-v0
+uv run python scripts/pace/csv_data_converter.py "$csv" --task "$task"
+uv run python scripts/pace/fit.py --task "$task" --num_envs 2 --visualizer none \
+  "env.sim2real.data_dir=$PWD/${csv%/*}/chirp_data.pt" env.sim.dt=0.002 env.decimation=1 \
+  'env.sim2real.reference_leg_order=[]' 'env.sim2real.reference_wheel_order=["LF_WHEEL","RF_WHEEL","LH_WHEEL","RH_WHEEL"]' \
+  env.sim2real.cmaes.max_iteration=1
+```
+
 ## 参考数据与 CMA-ES 拟合
 
 两种采集器写出相同格式的 PyTorch 张量字典。实机数据也按此格式整理。设 `T` 为采样点数（至少 2 个），`L`、`W` 分别为文件中实际记录的位置列数和速度列数。每一行记录施加本步指令时、推进物理仿真前的状态。

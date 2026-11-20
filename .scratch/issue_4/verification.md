@@ -553,3 +553,30 @@ best=("$trial"/cases/test_x5_subset_fit_and_replay_5/logs/pace-sim2real/*/*/best
 - 真实轨迹证据覆盖 Newton。PhysX 的分离摩擦参数和回放兼容性通过契约测试。上阶段真实 PhysX 启动在 Kit 许可确认处退出，本次没有真实 PhysX 轨迹。
 - 本次按批准范围运行 CR8 专项。Implement 阶段全库有 17 项原生 MuJoCo 失败，涉及默认扫频上限与查看器退出，两类问题各有一例在拆分前复现。本次未重跑原生 MuJoCo 全库。[实施阶段回归记录](plan.md#cr8-implement-交接)
 - CR8 的五项验收均有结果，无待决规格问题。此记录止于 Verify。
+
+## CR7 实机 CSV 转换正式验收
+
+**结论：CR7-A1–A5 全部通过。** 用户批准进入 Verify 后，在基于 `3a0ce14` 的当前工作树重新执行 CPU 专项与独立 CLI 检查。转换脚本 SHA-256 为 `6d7f6e1eb8887be529fd4540aa2a3a081a0e7e56c6483ae5709a156c8fea839e`。[批准的五项条件](spec.md#cr7-实机-csv-转换规格) · [专项测试](../../tests/test_csv_data_converter.py)
+
+| 条件 | 本次实测 |
+| --- | --- |
+| A1 任务与列映射 | 纯位置、纯速度、混合子集和额外遥测的列映射均通过。另用注册的 X3mini 运行乱序混合 CSV，位置输出按 LF_HAA、RF_HAA 排列，速度输出 RH_WHEEL；对照三帧四个信号张量，类型、形状、值均吻合。未知任务、未知关节、重复表头、缺列均被拒绝，四轮样例指定 X5 时报告 LF_WHEEL。 |
+| A2 反馈与帧 | 混合 CLI 样例两端分别有不同关节缺反馈，各裁去一帧；在有效段内令 RH_WHEEL 失效时，返回非零，指出 CSV 第 4 行与关节名，目标文件不存在。全无效、仅一帧、标志非法、空测量、无穷和 float32 溢出用例均通过。 |
+| A3 物理时间 | 2 ms 与 2.5 ms 固定网格、非零起点、容差内外抖动、可行周期偏离首末平均值的工况均通过。重复、倒退、非有限与网格跳变均定位源行。对样例的同一文件，严格加载器以报告的 2 ms 成功、以默认 2.5 ms 报时间间隔不匹配。 |
+| A4 文件保护 | 临时目录中检查默认、显式相对和绝对路径；既有文件、输入和硬链接别名在失败前后逐字节相同。另启动两个独立 CLI 进程写同一新路径，退出码分别为 1 和 0，成功产物完整可读、失败者提示另存。模拟序列化异常后未残留临时输出。 |
+| A5 给定样例 | 输入 SHA-256 与 Research 一致，为 `3e3adb9ed7505d4c9b107f065d23d1989b30b5afda3034103737e3f0d6dd42e1`。10,000 帧中裁去开头 2 帧，原始秒值 0.004 至 19.998 逐项相同。仅输出 time 及两个 [9998,4] 轮速张量，两者对 CSV 中 dq、dq_des 转成 float32 后的最大绝对差均为 0 rad/s。将 CLI 打印的分组和周期传给注册的 X3mini 配置与实际拟合加载器，加载后首帧有效时间为 0，原始时间向量完整。 |
+
+**命令与证据。** 本次临时目录为 `/tmp/cr7-verify-6Owd86Qj`，包含 pytest 日志、JUnit 报告、独立检查脚本及其输出。以下命令在项目根目录运行，pytest 返回 0，29 通过、0 跳过，耗时 26.10 秒；35 条警告为依赖调用 PyTorch JIT 的弃用提示。
+
+```bash
+trial=/tmp/cr7-verify-6Owd86Qj
+export CUDA_VISIBLE_DEVICES='' PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2
+.venv/bin/python -m pytest -q -rs --basetemp="$trial/cases" --junitxml="$trial/results.xml" \
+  tests/test_csv_data_converter.py \
+  tests/test_mixed_collection_fit.py::test_reference_loader_requires_explicit_legacy_time_and_bias_provenance \
+  tests/test_mixed_collection_fit.py::test_reference_loader_rejects_invalid_mixed_input
+```
+
+额外运行 `.venv/bin/python /tmp/cr7-verify-6Owd86Qj/check.py`，在新建的临时目录中完成上述独立样例、内部缺口与进程竞争检查，返回 0。隐藏 GPU 时 Warp 输出无可用 CUDA 设备提示，CPU 转换与加载均成功。Ruff 检查及格式检查通过，转换器 Pyright 为 0 错误、0 警告，`git diff --check` 通过。
+
+**验证范围。** 样例由模拟数据生成。本次验证 CSV 到拟合加载器的数据兼容性，未运行参数辨识或仿真；排他发布在支持硬链接的本地文件系统验证。

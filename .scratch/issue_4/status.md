@@ -1,5 +1,7 @@
 # Issue #4 — Status
 
+CR7 Verify 已完成，A1–A5 全部通过。29 项 CPU 回归通过，独立检查确认给定样例 9,998 帧的四列实测、期望轮速逐值一致；双进程竞争同一输出仅一次成功。[正式验收记录](verification.md#cr7-实机-csv-转换正式验收)
+
 CR8 Verify 已完成，A1–A5 全部通过。专项 80 项通过、0 跳过；另在 Newton 上逐步核对 X3mini、ANYmal D、X5 的全部动作列、实际参数和延迟。X5 全量与拆分前完全一致，实际跨腿子集的 v3 原轨迹复现最大差为 1.1920929e−7 rad 和 1.49011612e−8 rad/s。真实 PhysX 轨迹与上阶段的原生 MuJoCo 全库失败见验证范围。[正式验收记录](verification.md#cr8-独立回放与部分关节采集验收) · [验收探针](cr8_verify_actions.py)
 
 CR6 Verify 已完成。CR6-A1–A4 全部通过，42 项专项测试全部执行。真实 X5 四组指标与研究基线一致，已核对自定义频带、绘图开关和拟合加载兼容性。[验收记录](verification.md#cr6-滤波诊断与可视化验收)

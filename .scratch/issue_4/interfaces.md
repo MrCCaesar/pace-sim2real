@@ -376,3 +376,40 @@ uv run python scripts/pace/replay.py --task "$task" --duration 1 --min_frequency
 **数据与采样。** 写出的字典含环境 0 的步进前 `time[T]`（CPU float64，秒，从 0 开始），以及每个有效组的成对 CPU float32 张量。P 个位置关节产生 `dof_pos[T,P]`（物理角减偏置，rad）和 `des_dof_pos[T,P]`（编码器坐标目标，rad）；V 个速度关节产生 `dof_vel[T,V]` 和 `des_dof_vel[T,V]`（关节轴角速度，rad/s）。每个期望值都是该步发出的延迟前目标。省略空组的两个键。时间递增、张量有限；发生异常复位、终止、仿真关闭、时间跳变或任一环境含无效状态时，报错并保留已有文件。常规采集允许 T=1，拟合/文件回放要求 T≥2 且参考时间与拟合控制周期兼容，拟合及配对结果回放要求 decimation=1。
 
 **项目内部共用采样接口。** `collect_trajectory(env, leg_trajectory, wheel_trajectory, bias, *, control=None) -> dict[str, torch.Tensor]` 继续接收已初始化且已施加参数的环境、按选中顺序排列的位置目标 [T,P] 与可选速度目标 [T,V]，以及仿真设备上的位置偏置 [E,P]（E 为环境数）。纯速度使用 [T,0] 位置目标，纯位置允许速度目标为 None。存在保持关节或需要按名重排时，使用已有 `SubsetControl` 准备全机动作并按记录顺序提取测量。返回上述 CPU 字典；形状、有限性和运行状态异常按现有错误契约处理。参数的选择、初态和落盘由调用方负责。拟合参数、时间基准与评分契约见 CR4；仿真工况及测量验收见 [CR8 规格](spec.md#cr8-独立回放与部分关节采集specify--approved)。
+
+## CR7 CSV 转换接口
+
+**状态：Approved。** 面向使用者的接口为一个命令行入口与一份张量文件。Q6–Q10 已批准。按 Q10，从 CSV 表头取得记录关节集合，再依任务配置确定物理量与组内列序。用户已批准本节配套接口与 CR7-A1–A5。[规格及验收条件](spec.md#cr7-实机-csv-转换规格)
+
+### 命令行与配置
+
+`scripts/pace/csv_data_converter.py INPUT.csv --task TASK [--output PATH]`。输入文件是相对于当前工作目录或绝对路径；`TASK` 是已注册的 PACE 任务 ID。缺省输出为输入所在目录的 `chirp_data.pt`。显式相对输出也相对于输入所在目录解释，例如 `--output wheels.pt`；绝对路径按原值使用。成功返回 0，报告输出路径、输入/保留/两端裁剪帧数、位置和速度两个具名列序（含空列表）及采样周期。参数、数据、配置或文件错误返回非零；已有目标提示使用其他输出名。发布结果应保证已有目标和输入始终完整，排他创建须在实际写入时成立。
+
+配置发现使用已安装 Isaac Lab 的 `load_external_tasks()` 和 `load_cfg_from_registry(task, "env_cfg_entry_point")`。调用项目现有的 `resolve_joint_groups(env_cfg.sim2real)` 取得完整组，支持旧纯腿任务的 `joint_order`。输出列沿各任务组顺序取与表头的交集。有效的任务控制周期是 `env_cfg.sim.dt × env_cfg.decimation`。这些是既有配置接口；转换在 CPU 上运行。[任务注册](../../src/pace_sim2real/tasks/manager_based/__init__.py) · [分组契约](../../src/pace_sim2real/utils/collection_contracts.py#L46)
+
+### 输入宽表与行诊断
+
+- UTF-8 逗号分隔 CSV，一行表头，每个数据行宽度与表头一致。一行是一帧。`time_s` 是秒；若有 `seq` 可一并显示，原 CSV 行号足以定位帧。其他公共列如 `sender_id`、`mono_ns` 不参与时间或关节推断。
+- 以 `<关节名>.<字段>` 分列。精确、区分大小写匹配任务关节名；至少记录一个关节。重复列名、未知关节前缀均报错。每个出现的关节须有 `feedback_valid` 和该组的期望/实测两列。已知关节的其他遥测列可共存。表头顺序不决定输出列序。
+- 每个记录关节逐帧提供 `feedback_valid` 为 `0` 或 `1`。取全体记录关节均为 1 的首帧至末帧；区间内若再次出现 0，报告首个相应源行与失效关节。至少保留两帧。裁去帧的反馈可留空。保留段的必需信号均须解析为有限数，写为 float32 后仍须有限。无效标志和异常字段报告源行、关节及字段名。
+
+### 时间、信号和持久化
+
+对于保留段的 float64 时间 `t[i]`，检查有限且严格递增。以下为**已批准的时间网格判据**，与严格拟合的逐帧比较使用同一容差。设 `e[i]=t[i]-t[0]`，候选周期为 `d`，每帧要求 `abs(e[i]-i*d) ≤ 1e-7 s + 1e-5 * abs(i*d)`。若全段符合任务周期，按默认周期即可严格拟合。否则检查是否存在全段均可接受的正周期：对每个 `i ≥ 1`，该帧允许的周期范围为 `[(e[i]−1e−7)/(i*(1+1e−5)), (e[i]+1e−7)/(i*(1−1e−5))]`（秒）。按行求交；交集首次为空时报告该源帧、实测时刻及此前允许的时间范围。交集非空时，取最接近首末帧平均周期 `e[T−1]/(T−1)` 的可行周期，用上述 float64 逐帧比较核对，并按足以严格加载的精度报告该周期及任务周期。这样容差内的抖动仍可导出，单个异常间隔也不会把全部正确帧改判为异常。输出时间始终逐帧取自 `time_s`。[严格加载器](../../src/pace_sim2real/utils/collection_contracts.py#L198)
+
+| 保存键 | 来源与物理含义 | CPU 类型和形状 |
+| --- | --- | --- |
+| `time` | CSV 控制启动后的原始秒值，保留首帧时间 | float64 `[T]` |
+| `dof_pos`、`des_dof_pos` | 位置组的 `q`、`q_des`，沿记录关节轴的编码器角与目标角，rad | float32 `[T,P]`，P>0 时成对写入 |
+| `dof_vel`、`des_dof_vel` | 速度组的 `dq`、`dq_des`，沿记录关节轴的实测与目标角速度，rad/s | float32 `[T,V]`，V>0 时成对写入 |
+
+保存为可用 `torch.load(..., map_location="cpu", weights_only=True)` 读取的字典。拟合通过配置声明两个参考组的名称与列序；按原始数值写入信号，不对实测值额外减偏置。拟合读取时以首个保留时间为零点，并保留原时间向量供溯源。[拟合数据契约](../../src/pace_sim2real/utils/collection_contracts.py#L174)
+
+**样例调用（实施后）。** 输入文件在 X5 目录，表头的四个关节属于 X3mini。
+
+```bash
+csv=data/Isaac-Pace-Sevnce-X5-v0/motor_sweep_simulated/data.csv
+uv run python scripts/pace/csv_data_converter.py "$csv" --task Isaac-Pace-Sevnce-X3mini-v0
+```
+
+此例的拟合声明是 `env.sim2real.reference_leg_order=[]`、`env.sim2real.reference_wheel_order=["LF_WHEEL","RF_WHEEL","LH_WHEEL","RH_WHEEL"]`、`env.sim.dt=0.002`、`env.decimation=1`。`env.sim2real.data_dir` 可指向转换产物的绝对路径。[拟合入口](../../scripts/pace/fit.py#L109)

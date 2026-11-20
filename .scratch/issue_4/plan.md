@@ -454,3 +454,34 @@ CR4 正式 Verify 已完成。逐工单证据、数值、全量回归三项失�
 本次独立轨迹的 v2 预测 RMSE 为 0.018491455 rad、1.6192978 rad/s。文件回放测试按实测张量重新计算并核对这两个值。Pyright 检查两个入口、共用仿真模块和子集控制，0 错误。运行日志位于 `/tmp/pace-cr8-arKTEC7B`。
 
 最终专项命令为 `.venv/bin/python -m pytest -q -rs tests/test_mixed_collection_fit.py tests/test_fit_replay.py`，沿用上文测试环境。72 通过（含 Newton/PhysX 固定摩擦参数分支），8 个按需集成用例默认跳过，上表已记录各自显式运行的结果。正式 Verify 待用户批准。
+
+## CR7 实机 CSV 转换实施计划
+
+**状态：Approved。** 用户在 CR7-T1–T5 提交审批后答复“进入 Implement”。 已批准的输入为 Q6–Q10、ADR 0018、转换接口和 CR7-A1–A5。下表列出实施顺序及每项可交付的证据。生产改动集中于 `scripts/pace/csv_data_converter.py`，专项回归集中于 `tests/test_csv_data_converter.py`。[规格及验收条件](spec.md#cr7-实机-csv-转换规格) · [接口契约](interfaces.md#cr7-csv-转换接口) · [任务配置决策](../../adr/0018-csv-converter-task-config.md)
+
+| 任务 | 前置 | 交付物与检查 |
+| --- | --- | --- |
+| CR7-T1 命令行、任务配置与 CSV 列映射（A1） | 无 | 建立入口，接入必需的 CSV、`--task` 和可选的 `--output`。直接加载注册任务默认配置，用 `resolve_joint_groups` 解析完整分组，再从表头取实际记录的关节。用乱序表头的纯位置、纯速度、混合子集核查具名字段和组内顺序，覆盖旧纯腿配置、额外遥测、未知任务或关节、重复表头及缺列。 |
+| CR7-T2 帧裁剪与张量转换（A1、A2） | T1 | 保留源行号，核对行宽与各关节有效标志，裁去首尾未全部有效的帧。对有效段内部缺反馈报告首个源帧和关节。按任务组提取同帧实测及期望，形成 CPU float64 秒值和各有效组的 CPU float32 信号。用交错上线/下线、全无效、仅余一帧、无效标志、空值和溢出检验诊断；逐值核对输出字段、列序与形状。 |
+| CR7-T3 时间网格与拟合周期提示（A3） | T2 | 对保留段执行接口约定的有限性、递增性、任务网格和可行周期交集检查，报告足以复现严格加载结果的周期或首个超差帧。构造非零时间起点、匹配及不匹配的固定周期、容差边界、重复与倒退时刻。对照实际加载器验证报告的周期，核对输出保持 CSV 原秒值。 |
+| CR7-T4 输出保护与命令行报告（A4） | T1–T3 | 把完整转换接入默认及显式输出路径，保存时排他创建。成功时报告路径、输入/保留/首尾裁剪帧数、两组具名列序和周期。在独立临时目录从其他工作目录调用入口，验证相对输出位置、绝对路径、已有文件、输入别名、并发创建和写入失败的清理。已有文件逐字节比较，成功产物经 `weights_only=True` 完整读取。 |
+| CR7-T5 给定样例往返与用法文档（A1–A5，重点 A5） | T1–T4 | 对给定 CSV 以 X3mini 运行正常入口，使用临时输出。用原 CSV 独立核对 9,998 个原始时间和四列轮速的每个实测、期望值；以报告的分组和 2 ms 调用 `fit.py` 使用的 `load_reference_data`，再核查 2.5 ms 严格加载失败。以 X5 对同一输入核查未知关节诊断。在 README 的参考数据用法中给出转换命令、同目录另存及这份样例的拟合配置。 |
+
+**验证交接。** 专项在项目 Python 环境下以 CPU 执行。正式 Verify 时逐项记录命令、返回码、实际通过或跳过情况，以及 A5 的数据摘要、帧数、列序、时间范围和两种加载结果。以下是实施后的复跑命令：
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
+  .venv/bin/python -m pytest -q -rs tests/test_csv_data_converter.py \
+  tests/test_mixed_collection_fit.py::test_reference_loader_requires_explicit_legacy_time_and_bias_provenance \
+  tests/test_mixed_collection_fit.py::test_reference_loader_rejects_invalid_mixed_input
+```
+
+**样例前提。** 本次 Plan 复核了给定 CSV 的 SHA-256，与 Research 记录的 `3e3adb9ed7505d4c9b107f065d23d1989b30b5afda3034103737e3f0d6dd42e1` 一致。样例位于本机数据目录；若其他验收环境缺少匹配文件，仍可运行合成工况，A5 单独登记待验。[样例与时序证据](research.md#样例反馈与字段)
+
+**阶段交接。** 已进入 Implement，执行 CR7-T1–T5。
+
+### CR7 Implement 交接
+
+T1–T5 已实现于 [转换入口](../../scripts/pace/csv_data_converter.py)、[专项测试](../../tests/test_csv_data_converter.py) 和 [README 用法](../../README.md#从实机-csv-转换参考数据)。输出先在同目录完整序列化，再以排他硬链接发布。此操作要求输出文件系统支持硬链接。
+
+运行上文的完整 pytest 命令，29 项通过、0 跳过、35 条 PyTorch JIT 弃用警告。样例轮速和期望值已按源行独立复算，共 9,998 帧；实际严格加载器在 2 ms 成功、2.5 ms 拒绝。X5 任务正确报告未知关节。已覆盖并发创建、别名保护、写入失败清理和非均匀时间。最终类型标注调整后以相同环境复跑 `tests/test_csv_data_converter.py::test_supplied_sample`，1 项通过。输出使用临时路径。Ruff 检查、格式检查和 `git diff --check` 均通过；`uvx --offline pyright --pythonpath .venv/bin/python scripts/pace/csv_data_converter.py` 为 0 错误、0 警告。上述检查在 CPU 上执行，正式 Verify 待批准。

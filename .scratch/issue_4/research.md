@@ -449,3 +449,39 @@ MPLCONFIGDIR="$p/mpl-edges" .venv/bin/python "$p/trial.py" edges > "$p/edges.txt
 **迁移清单。** README 和使用手册含旧回放命令；纯采集示例保留原入口。回放测试同时包含采集命令、回放命令、对旧脚本的函数导入，以及测试工况用的任务解析替换；需按用途迁移。混合采集测试通过文件路径加载采样函数，其启动参数用例目前仅覆盖采集和拟合。离线绘图使用已保存结果，可继续维持独立入口。历史阶段文档保留其当时的命令。[README](../../README.md#L36) · [使用手册](../../docs/usage.md#L154) · [回放及路径保护](../../tests/test_fit_replay.py#L199) · [部分关节启动测试](../../tests/test_fit_replay.py#L322) · [按名扫频测试](../../tests/test_fit_replay.py#L448) · [采样与 CLI 测试](../../tests/test_mixed_collection_fit.py#L674) · [离线入口](../../scripts/pace/plot_trajectory.py#L263)
 
 **验收边界。** “同配置可直接拟合”要满足现有加载契约。采集允许一个控制步，拟合加载器至少要求两个样本，且拟合入口要求 `decimation=1`。建议用满足这些条件的子集文件验证采集 → 拟合 → 两种回放；另以普通全量采集作为数值基线。Research 只做源码、配置、既有测试与安装源的静态核对，本轮没有运行实验、测试或仿真。[采集时长](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L358) · [参考时间校验](../../src/pace_sim2real/utils/collection_contracts.py#L199) · [拟合前置条件](../../scripts/pace/fit.py#L67)
+
+## CR7 具名关节 CSV 转换为拟合参考文件（Research · Draft）
+
+**范围与证据。** 用户已批准 Q6、Q7 和 Research。此次核对给定 CSV、采集者的字段说明、项目代码和项目使用的 Isaac Lab 源码。以下兼容性结论来自静态核对，尚未运行转换、加载实验、拟合或仿真。[CR7 需求](requirements.md#具名宽表与任务配置explore--draft) · [Issue #4](https://github.com/MrCCaesar/pace-sim2real/issues/4) · [本地 Isaac Lab 依赖](../../pyproject.toml#L86)
+
+### 样例、反馈与字段
+
+全表有 77 列、10,000 个控制周期。按十进制读取 `time_s`，9,999 个相邻间隔均为 0.002 s。四轮的 `feedback_valid` 在 `seq=1,2` 均为 0，之后全部为 1，保留段的四列 `dq` 和四列 `dq_des` 均为有限数。按 Q6 裁剪后，`seq=3…10000` 留下 9,998 帧，对应原始时间 0.004…19.998 s。样例 SHA-256 为 `3e3adb9ed7505d4c9b107f065d23d1989b30b5afda3034103737e3f0d6dd42e1`。采集者注明数值为人工生成，能用于格式验收。[样例数据](../../data/Isaac-Pace-Sevnce-X5-v0/motor_sweep_simulated/data.csv) · [字段与时序说明](../../data/Isaac-Pace-Sevnce-X5-v0/motor_sweep_simulated/README.md)
+
+同一行包含本周期目标和发令前最近的反馈，和拟合中先记录状态、再执行该行命令的顺序相容。转换只读取选中量的实测、目标、有效标志和公共时间。以全部记录关节都标记有效的首末帧界定保留段，可处理多个关节先后上线或下线。段内任一关节无效须按 Q6 报告帧与关节并终止。标记有效但必需测量为空、非数或无穷，是数据矛盾，建议报告原行、关节和字段；同样应检查保留段的目标值。标准库 `csv.reader` 支持引号，按 `newline=''` 打开时默认返回字符串，便于在映射列前识别重复表头和区分空白、数值零；未用的纳秒字段可以保持原精度。[采集格式](../../data/Isaac-Pace-Sevnce-X5-v0/motor_sweep_simulated/README.md) · [拟合采样顺序](../../scripts/pace/fit.py#L268) · [Python 3.12 CSV](https://docs.python.org/3.12/library/csv.html#csv.reader)
+
+### 任务配置的可行读取路径
+
+| 途径 | 能取得的配置及代价 |
+| --- | --- |
+| 从注册表加载默认环境配置 | 项目通过 `isaaclab.tasks` 注册任务。发现任务后，`load_cfg_from_registry(task, "env_cfg_entry_point")` 按 Gym ID 导入并实例化注册的 Python 配置类，可从 `env_cfg.sim2real`、`sim.dt`、`decimation` 取值。适合仅传 `--task` 的请求。仍依赖项目与 Isaac Lab 的 Python 安装。 [任务发现](../../../IsaacLab/source/isaaclab/isaaclab/cli/__init__.py#L43) · [项目入口](../../pyproject.toml#L27) · [注册 ID](../../src/pace_sim2real/tasks/manager_based/__init__.py#L7) · [注册配置解析](../../../IsaacLab/source/isaaclab_tasks/isaaclab_tasks/utils/parse_cfg.py#L69) |
+| 使用拟合入口的配置解析 | `resolve_task_config(task, "", overrides=[])` 支持在启动 Kit 前解析配置。显式的覆盖项可用于与拟合相同的 Hydra 组合，空列表避免将转换器自身参数当作 Hydra 参数。这条路径适合需要解释预设或用户覆盖的场景。两条途径都可在 `launch_simulation` 和 `gym.make` 前取得所需配置。 [Isaac Lab 解析器](../../../IsaacLab/source/isaaclab_tasks/isaaclab_tasks/utils/hydra.py#L461) · [拟合入口顺序](../../scripts/pace/fit.py#L75) |
+
+建议按指定任务的 `resolve_joint_groups` 取得完整的两组名称，再按任务顺序与表头中实际记录的关节取交集；额外出现的未知关节应指明名称。该函数还支持仅有 `joint_order` 的旧纯位置任务。直接维护另一份机器人名称表会产生第二份配置，按目录猜任务则会把此样例的 `LF_WHEEL` 等名称交给 X5。X3mini 的速度组为 `LF_WHEEL, RF_WHEEL, LH_WHEEL, RH_WHEEL`，X5 的速度组为 `FL_foot_joint, FR_foot_joint, RL_foot_joint, RR_foot_joint`。两者均与历史的 `foot/wheel` 规则一致。若其他任务的显式分组与该规则冲突，建议在 Specify 明确处理方式。[完整关节分组](../../src/pace_sim2real/utils/collection_contracts.py#L46) · [X5 与 X3mini](../../src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py#L121) · [旧纯位置配置](../../src/pace_sim2real/tasks/manager_based/pace/anymal_pace_env_cfg.py#L40)
+
+### 拟合读取、周期和路径
+
+- **文件内容。** `load_reference_data` 以 CPU、`weights_only=True` 读取张量字典。文件共用 `time[T]`，位置用 `q/q_des → dof_pos/des_dof_pos[T,L]`（rad），速度用 `dq/dq_des → dof_vel/des_dof_vel[T,W]`（rad/s）。按需求仅写有记录的组。加载要求张量是有限浮点数，信号转为 float32 后也须有限，且 `T ≥ 2`、时间严格递增。额外字段会被拒绝；`original_time` 是加载后的派生字段。样例预计只有 `time[9998]` 和一对 `[9998,4]` 速度张量。[加载器](../../src/pace_sim2real/utils/collection_contracts.py#L174) · [参考语义 ADR](../../adr/0009-reference-semantics-in-fit-config.md)
+- **列序。** 拟合分别用 `reference_leg_order` 和 `reference_wheel_order` 解释数据，`None` 取任务全组，空列表表示该组无记录。形状只能校验列数，不能发现相同列数但名称错位。样例适用 X3mini 的 `reference_leg_order=[]` 和 `reference_wheel_order=[LF_WHEEL,RF_WHEEL,LH_WHEEL,RH_WHEEL]`；建议导出时打印两个分组，尤其显示缺席组的空列表。[声明解析](../../src/pace_sim2real/utils/collection_contracts.py#L65) · [任务默认值](../../src/pace_sim2real/tasks/manager_based/pace/pace_sim2real_env_cfg.py#L184)
+- **固定周期不匹配。** Isaac Lab 控制周期是 `sim.dt × decimation`，当前拟合另要求 `decimation=1`。严格加载逐个比较 `time[i] - time[0]` 与 `i × dt`，容差为 `atol=1e-7 s, rtol=1e-5`。Q7 允许以原 `time_s` 导出，样例应提示观测 0.002 s（500 Hz）、任务默认 0.0025 s（400 Hz），以及严格拟合需 `env.sim.dt=0.002`、`decimation=1`。在此配置下，加载器有效时间从 0 开始并保留原始首帧 0.004 s。建议保存双精度时间以保留 CSV 秒值的有效精度。[控制周期](../../../IsaacLab/source/isaaclab/isaaclab/envs/manager_based_env.py#L295) · [两任务默认值](../../src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py#L208) · [拟合约束](../../scripts/pace/fit.py#L65) · [严格校验](../../src/pace_sim2real/utils/collection_contracts.py#L198)
+- **非均匀时间。** 重复、倒退、非有限时间不符合现有加载条件。时间虽递增，若在拟用的固定网格上逐帧偏差超出容差，只改为平均或中位周期也不能保证严格拟合。建议将整段相对时间对固定网格核查，同时定位首个偏离帧；警告中区分“等间隔但任务周期不同”与“本记录含抖动或缺帧”。对于后一种，超容差时是否仍导出原时间由用户决定。`legacy_index` 会重建有效时刻，其适用前提是已知真实固定间隔的历史错误标签。[加载器两种模式](../../src/pace_sim2real/utils/collection_contracts.py#L210) · [时间 ADR](../../adr/0006-explicit-reference-time.md)
+- **导出与拟合路径。** 转换结果按需求放在 CSV 旁，默认文件名暂按 `chirp_data.pt` 理解。拟合从项目 `data/<规范化任务名>/` 拼接 `env.sim2real.data_dir`。样例位于名称含 X5 的目录，拟合使用 X3mini 时可将 `env.sim2real.data_dir` 指向实际输出的绝对路径；单给默认文件名将查找 X3mini 任务目录。同名文件已有两种先例，滤波器排他创建，采集器完成临时文件后原子替换。转换器需要在 Specify 确认已有输出如何处理。[文件名](../../src/pace_sim2real/utils/paths.py#L10) · [拟合路径](../../scripts/pace/fit.py#L108) · [任务名规范化](../../../IsaacLab/source/isaaclab_rl/isaaclab_rl/entrypoints/common.py#L325) · [滤波写入](../../scripts/pace/filter_chirp_data.py#L75) · [采集写入](../../src/pace_sim2real/utils/trajectory_simulation.py#L309)
+
+**建议与待确认事项（Proposed）。** 对仅传 `--task` 的转换，优先考虑直接读取注册配置。以该任务的默认控制周期作为提示的参照，以录制的秒值作为文件时间。建议将下列两项带入 Specify。
+
+- Q8：若有效段的时间戳偏离录制自身的固定时间网格，超出严格拟合可接受的误差，建议停止并指出首个偏离帧。均匀但与任务默认周期不同的情形继续按已批准的 Q7 导出。
+- Q9：建议已有同名输出时保留原文件，提示用可选输出名另存。这样同目录的多份 CSV 可各自保留转换结果。
+
+**核对范围。** 核对环境为 Python 3.12.16、PyTorch 2.11.0+cu130、Isaac Lab 45.1.0、isaaclab-tasks 30.1.3 和 Gymnasium 1.4.0，Isaac Lab 源码为 `ae6330248`。本轮逐行读取样例并核对配置、消费端源码及现有测试。拟议的 CPU 往返验收可在独立临时目录对照 CSV 原行、两种固定周期的加载结果、内部失效和未知关节的诊断；转换器端到端结果留待后续验证。
+
+**Research 交接。** 用户答复“同意 Q8、Q9，并批准 CR7 进入 Specify”。上文 Q8、Q9 的建议现为 Approved。[Specify 草案](spec.md#cr7-实机-csv-转换规格)
