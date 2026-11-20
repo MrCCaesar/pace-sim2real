@@ -6,6 +6,7 @@ PACE 用 CMA-ES 从期望轨迹和实测响应中辨识关节惯量、阻尼、�
 | --- | --- | --- |
 | 用固定参数采集腿部位置和轮速 | `scripts/pace/data_collection.py --task 任务名` | `data/<任务名>/chirp_data.pt` |
 | 用原生 MuJoCo 采集 X5 传感器数据 | `scripts/pace/data_collection_mujoco.py` | `data/Isaac-Pace-Sevnce-X5-v0/mujoco_chirp_data.pt` |
+| 从实机 CSV 拟合并回放 | [实机数据操作流程](#实机数据操作流程) | 从电机日志得到拟合参数和回放误差 |
 | 对采集记录离线滤波 | `scripts/pace/filter_chirp_data.py 输入文件 --task 任务名` | 默认在同目录保存 `<原文件主名>_filtered.pt` |
 | 从采集或实机记录中辨识参数 | `scripts/pace/fit.py --task 任务名` | 运行目录中的 `best_result.pt` 和优化日志 |
 | 把估计参数写回仿真，验证其他轨迹 | `scripts/pace/replay.py --task 任务名` | 仿真响应，可绘图或另存 |
@@ -136,6 +137,47 @@ uv run python scripts/pace/fit.py --task "$task" --num_envs 2 --visualizer none 
   "env.sim2real.data_dir=$PWD/${csv%/*}/chirp_data.pt" env.sim.dt=0.002 env.decimation=1 \
   'env.sim2real.reference_leg_order=[]' 'env.sim2real.reference_wheel_order=["LF_WHEEL","RF_WHEEL","LH_WHEEL","RH_WHEEL"]' \
   env.sim2real.cmaes.max_iteration=1
+```
+
+## 实机数据操作流程
+
+以下示例使用 X3mini 的一次四轮扫频记录。请从仓库根目录开始，在同一个 Bash 会话中依次执行四步。
+
+**1. 转换 CSV。** 指定采集时的机器人任务。转换器在 CSV 同目录生成 `chirp_data.pt`，并打印保留帧数、关节列序和控制周期。本例保留 9,999 帧，只有四列轮速，周期为 0.002 s。
+
+```bash
+task=Isaac-Pace-Sevnce-X3mini-v0
+record_dir="$PWD/data/$task/motor_test_1795082517117"
+raw="$record_dir/chirp_data.pt"
+filtered="$record_dir/chirp_data_filtered.pt"
+uv run python scripts/pace/csv_data_converter.py "$record_dir/data.csv" --task "$task"
+```
+
+**2. 滤波。** 本次扫频范围为 1–5 Hz，使用 10 Hz 低通并在扫频范围内计算诊断指标。默认输出为上一步定义的 `$filtered`，保留原始时间戳与目标轮速。需要查看曲线时可加 `--plot`。转换和滤波都要求输出文件名可用；重复处理时可直接复用已有结果，或用 `--output` 另存并同步更新路径变量。
+
+```bash
+uv run python scripts/pace/filter_chirp_data.py "$raw" --task "$task" \
+  --cutoff_hz 10 --analysis_band_hz 1 5
+```
+
+**3. 拟合四个轮关节。** 拟合读取滤波文件。下面的配置与转换器打印的列序和周期一致。`legacy_index` 按帧序号推进，每帧对应 2 ms，适用于本例一帧对应一个控制周期、时间戳有记录抖动的情况。换用其他记录时，请按转换器输出调整两组关节名和周期。
+
+```bash
+reference=(
+  'env.sim2real.reference_leg_order=[]'
+  'env.sim2real.reference_wheel_order=["LF_WHEEL","RF_WHEEL","LH_WHEEL","RH_WHEEL"]'
+  env.sim2real.time_mode=legacy_index env.sim2real.legacy_sample_dt=0.002
+  env.sim.dt=0.002 env.decimation=1
+)
+uv run python scripts/pace/fit.py --task "$task" --num_envs 2 --visualizer none \
+  "env.sim2real.data_dir=$filtered" "${reference[@]}"
+```
+
+**4. 用同一条实机轨迹回放。** 拟合完成后运行以下命令。`replay.py` 默认读取该任务最新运行目录中的 `best_result.pt`，按文件中的目标轮速驱动仿真，打印仿真轮速相对滤后实测轮速的 RMSE（rad/s），并将仿真响应写入 `replay.pt`。如果此后已运行过其他拟合，可追加 `--fit_result "$PWD/logs/pace-sim2real/$task/<运行目录>/best_result.pt"`，将占位符替换为第 3 步的实际运行目录。
+
+```bash
+uv run python scripts/pace/replay.py --task "$task" --visualizer none \
+  --trajectory_file "$filtered" --output "$record_dir/replay.pt" "${reference[@]}"
 ```
 
 ## 参考数据与 CMA-ES 拟合
