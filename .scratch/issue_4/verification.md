@@ -580,3 +580,29 @@ export CUDA_VISIBLE_DEVICES='' PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=
 额外运行 `.venv/bin/python /tmp/cr7-verify-6Owd86Qj/check.py`，在新建的临时目录中完成上述独立样例、内部缺口与进程竞争检查，返回 0。隐藏 GPU 时 Warp 输出无可用 CUDA 设备提示，CPU 转换与加载均成功。Ruff 检查及格式检查通过，转换器 Pyright 为 0 错误、0 警告，`git diff --check` 通过。
 
 **验证范围。** 样例由模拟数据生成。本次验证 CSV 到拟合加载器的数据兼容性，未运行参数辨识或仿真；排他发布在支持硬链接的本地文件系统验证。
+
+## CR9 离线滤波固定周期正式验收
+
+**结论：A1–A5 通过。** 用户批准本轮 Verify。验收使用当前工作区和本机注册任务配置，输出写入临时目录。
+
+| 条件 | 正式验收结果 |
+| --- | --- |
+| A1 实机记录 | 从 X3mini 的 motor_test_1795082517117/data.csv 重新转换。10000 帧裁剪首个无效帧，任务周期 0.002 s。按 10 Hz 截止、1–5 Hz 频带和 --plot 成功处理 9999 × 4 个轮速样本。独立读取原 CSV，输出时间戳、目标轮速逐值相等；实测轮速与独立使用 SciPy 四阶 500 Hz 前后向滤波并转回 float32 的结果逐值相等。 |
+| A2 周期选择 | 两端运行三组合成记录，任务优先选择 0.002 s，等间隔回退选择 0.0025 s，首末平均值不可行的记录选择 0.002500186292185502 s。根据转换器打印的周期独立计算滤波值与频率轴，对照滤波入口图中实际数据，三组均匹配。 |
+| A3 非法时间 | 64 帧记录第 30 个索引增加 0.0005 s，两端均拒绝。转换器定位 CSV 第 32 行，滤波器定位 time[30]，均未发布输出。专项测试覆盖非有限、重复、倒序、少于两帧及容差边界。 |
+| A4 同一采样率 | 400 Hz 回退记录对照通过独立 SciPy 滤波、Nyquist 截止拒绝及诊断 FFT 栅格测试。额外调用 --plot，检查 Matplotlib 时域横坐标逐值等于输入时间，频谱横坐标等于 numpy.fft.rfftfreq(64, 0.0025)，相对误差容限 1e-14。 |
+| A5 命令及兼容性 | 真实注册任务可离线运行。专项测试覆盖缺失和未注册任务、无效周期、已有输出保护、旧 PT、截止、阶数、频带及绘图选项。Research 中两项旧容差用例本次均通过。 |
+
+**执行命令。** 在仓库根目录运行：
+
+```bash
+MPLBACKEND=Agg PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 .venv/bin/python -m pytest -q -rs tests/test_csv_data_converter.py tests/test_filter_chirp_data.py
+out=$(mktemp -d /tmp/cr9-verify.XXXXXX)
+task=Isaac-Pace-Sevnce-X3mini-v0
+.venv/bin/python scripts/pace/csv_data_converter.py "data/$task/motor_test_1795082517117/data.csv" --task "$task" --output "$out/raw.pt"
+MPLBACKEND=Agg .venv/bin/python scripts/pace/filter_chirp_data.py "$out/raw.pt" --task "$task" --cutoff_hz 10 --analysis_band_hz 1 5 --plot
+```
+
+**复核方法。** 独立探针用项目 Python 和 Agg 执行两个入口，对四种合成输入使用 64 帧、单轮、信号 sin(i/7)。任务优先样例在 2 ms 网格末帧增加 50 µs，纯回退样例使用 2.5 ms 等间隔；交集样例在 2.5 ms 网格倒数第二帧减 90 µs、末帧加 90 µs，无解样例在 2.5 ms 网格索引 30 增加 500 µs。
+
+**覆盖范围。** 专项 70 passed、1 skipped、35 条 PyTorch JIT 弃用警告，耗时 21.12 s。跳过项为旧 X5 motor_sweep_simulated/data.csv 在本机缺失的历史回归，CR9 指定的 X3mini 实机样例已独立执行。绘图采用 Agg 检查图形数据。

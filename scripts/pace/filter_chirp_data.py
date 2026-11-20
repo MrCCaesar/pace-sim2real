@@ -15,20 +15,9 @@ from scipy import linalg, signal
 from scipy.signal.windows import hann
 
 
-def _sample_rate(time: torch.Tensor) -> float:
-    if time.ndim != 1 or len(time) < 2:
-        raise ValueError("time must be a vector of at least two timestamps in seconds")
-    time = time.double()
-    intervals = time.diff()
-    dt = (time[-1] - time[0]).item() / (len(time) - 1)
-    if not math.isfinite(dt) or not (intervals > 0).all():
-        raise ValueError("time must be strictly increasing")
-    if ((intervals - dt).abs() > 1e-7 + 0.001 * dt).any():
-        raise ValueError("time must be uniformly sampled")
-    return 1 / dt
+def _filter_record(data: dict, order: int, cutoff_hz: float, task_dt: float) -> tuple[dict, float]:
+    from pace_sim2real.utils.sample_period import resolve_sample_period
 
-
-def _filter_record(data: dict, order: int, cutoff_hz: float) -> dict:
     fields = {"time", "dof_pos", "des_dof_pos", "dof_vel", "des_dof_vel"}
     if not isinstance(data, dict) or "time" not in data or data.keys() - fields:
         raise ValueError("Expected a PACE tensor dictionary with time and paired joint fields")
@@ -37,7 +26,7 @@ def _filter_record(data: dict, order: int, cutoff_hz: float) -> dict:
             raise ValueError(f"{key} must be a finite floating-point tensor")
 
     time = data["time"]
-    fs = _sample_rate(time)
+    fs = 1 / resolve_sample_period(time, task_dt)
     if not 0 < cutoff_hz < fs / 2 or not math.isfinite(fs):
         raise ValueError(f"cutoff_hz must be positive and below Nyquist ({fs / 2:g} Hz)")
     if order < 1:
@@ -69,7 +58,7 @@ def _filter_record(data: dict, order: int, cutoff_hz: float) -> dict:
         result[key] = torch.from_numpy(filtered.copy()).to(values.dtype)
         if not torch.isfinite(result[key]).all():
             raise ValueError(f"Filtered {key} exceeds its original dtype range")
-    return result
+    return result, fs
 
 
 def _save_new(path: Path, data: dict) -> None:
@@ -220,6 +209,7 @@ def _plot_group(time, raw, filtered, target, freq, amplitude, group, unit):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="Input PACE .pt recording")
+    parser.add_argument("--task", required=True, help="Registered PACE task providing the preferred control period")
     parser.add_argument("--output", type=Path, help="New output file (default: INPUT stem + _filtered.pt)")
     parser.add_argument("--cutoff_hz", type=float, default=20.0, help="Single-pass cutoff in Hz (default: 20)")
     parser.add_argument("--order", type=int, default=4, help="Single-pass Butterworth order (default: 4)")
@@ -233,6 +223,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--plot", action="store_true", help="Show per-joint time traces and raw amplitude spectra")
     args = parser.parse_args(argv)
+    from gymnasium.error import Error as GymError
+
+    from pace_sim2real.utils.sample_period import load_recording_task
+
     low, high = args.analysis_band_hz
     if not (0 < low <= high and math.isfinite(high)):
         parser.error("analysis_band_hz requires finite frequencies with 0 < LOW <= HIGH")
@@ -241,13 +235,22 @@ def main(argv: list[str] | None = None) -> int:
         if os.path.lexists(output):
             raise FileExistsError(f"Output already exists: {output}")
         data = torch.load(args.input, map_location="cpu", weights_only=True)
-        result = _filter_record(data, args.order, args.cutoff_hz)
+        cfg = load_recording_task(args.task)
+        result, fs = _filter_record(data, args.order, args.cutoff_hz, cfg.sim.dt * cfg.decimation)
         _save_new(output, result)
-    except (OSError, ValueError, RuntimeError, EOFError, pickle.UnpicklingError) as exc:
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        EOFError,
+        AttributeError,
+        KeyError,
+        GymError,
+        pickle.UnpicklingError,
+    ) as exc:
         parser.exit(1, f"{parser.prog}: {exc}\n")
     print(output)
     print(f"Analysis band: {low:g}–{high:g} Hz")
-    fs = _sample_rate(data["time"])
     plots = []
     for key, group, unit in (("dof_pos", "Position", "rad"), ("dof_vel", "Velocity", "rad/s")):
         if key not in data or not data[key].shape[1]:

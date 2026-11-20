@@ -485,3 +485,23 @@ MPLCONFIGDIR="$p/mpl-edges" .venv/bin/python "$p/trial.py" edges > "$p/edges.txt
 **核对范围。** 核对环境为 Python 3.12.16、PyTorch 2.11.0+cu130、Isaac Lab 45.1.0、isaaclab-tasks 30.1.3 和 Gymnasium 1.4.0，Isaac Lab 源码为 `ae6330248`。本轮逐行读取样例并核对配置、消费端源码及现有测试。拟议的 CPU 往返验收可在独立临时目录对照 CSV 原行、两种固定周期的加载结果、内部失效和未知关节的诊断；转换器端到端结果留待后续验证。
 
 **Research 交接。** 用户答复“同意 Q8、Q9，并批准 CR7 进入 Specify”。上文 Q8、Q9 的建议现为 Approved。[Specify 草案](spec.md#cr7-实机-csv-转换规格)
+
+## CR9 滤波器固定周期网格研究（Research · Proposed）
+
+用户批准 CR9 进入 Research。依据为当前工作区的 scripts/pace/csv_data_converter.py、scripts/pace/filter_chirp_data.py 及 tests/test_csv_data_converter.py。
+
+**已确认。** 对有限、严格递增的时间序列，转换器按首帧归零，要求存在正周期 dt，使每帧累计偏差满足 abs((t[i]-t[0])-i*dt) ≤ 1e-4 s + 1e-5*i*dt。转换器先试任务周期，再求各帧允许周期的交集并复核候选。PT 只保存原始时间与信号。滤波器在滤波和频谱诊断两处使用采样率，目前分别调用逐间隔校验。
+
+**只读 CPU 探针。** 用项目 .venv/bin/python -B 加载 motor_test_1795082517117 的 wheels_1-5Hz_Scale2.5_kv2_chirp_data.pt，调用现有 _period(time, lines, candidate)，候选分别为 0.002 和首末平均间隔。两者均接受 9999 帧，周期分别为 0.002 和 0.0020000000025005003 秒。重复相同探针，输入秒数 [0, .002, .00391, .00609]，首末平均 .00203 不可行，但交集路径选出 .002005020050200502；输入 [0, .002, .0046, .006]，两条路径均拒绝。实验验证的是时间判定，未运行端到端滤波。
+
+**方案及权衡。** 共享固定网格判定，转换器保留任务周期优先，滤波器从 PT 推断可行周期；两者可接受同一类时间序列。只校验首末平均周期会误拒可行记录。显式传入任务周期可在多解时选中与转换器相同的数值，但需额外上下文。转换器打印的周期无法从没有元数据的 PT 唯一恢复。
+
+**基线风险。** 执行 PYTHONDONTWRITEBYTECODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_csv_data_converter.py::test_grid tests/test_csv_data_converter.py::test_feasible_grid_with_endpoint_jitter，结果 2 failed。原用例的越界扰动和显式 1e-7 s 断言与工作区 1e-4 s 不一致。后续需按确认的容差保留两条用例各自检出的行为。
+
+**工作假设与待确认 Q1。** 建议沿用工作区容差，以两端时间有效性判定一致为目标。滤波器从 PT 推断周期并供滤波和频谱共同使用，保留输出原始时间、原命令和目标数据。用户自行配置 fit 的 legacy 模式。接口和验收细节留到 Specify。
+
+**Q1 用户决定。** 用户指定通过 --task 获取任务周期，取代此前仅从 PT 推断的建议，并确认工作区容差及两端判定一致。
+
+**Q2 待确认。** 转换器以 cfg.sim.dt * cfg.decimation 为首选周期；其不匹配时仍会搜索可行固定周期。建议滤波器复用相同顺序，滤波与频谱共用返回值。若要求仅接受任务周期，则应另外确认是否同步收紧转换器。
+
+**Q2 已确认。** 用户答复“沿用转换器的回退规则，并批准 CR9 进入 Specify？”。依次尝试任务周期与记录允许的固定周期。

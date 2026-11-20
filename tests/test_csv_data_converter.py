@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from pace_sim2real.utils.sample_period import resolve_sample_period
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/pace/csv_data_converter.py"
 spec = importlib.util.spec_from_file_location("csv_converter", SCRIPT)
@@ -94,24 +96,24 @@ def test_bad_csv(tmp_path, header, rows, match):
 def test_grid():
     for dt in (0.002, 0.0025):
         time = 0.004 + torch.arange(20, dtype=torch.float64) * dt
-        assert converter._period(time, list(range(2, 22)), 0.0025) == pytest.approx(dt)
+        assert resolve_sample_period(time, 0.0025, range(2, 22)) == pytest.approx(dt)
     time[5] += 5e-8
-    assert converter._period(time, list(range(2, 22)), 0.0025) == 0.0025
-    time[5] += 0.0001
+    assert resolve_sample_period(time, 0.0025, range(2, 22)) == 0.0025
+    time[5] += 0.0003
     with pytest.raises(ValueError, match="line 7"):
-        converter._period(time, list(range(2, 22)), 0.0025)
+        resolve_sample_period(time, 0.0025, range(2, 22))
 
 
 def test_feasible_grid_with_endpoint_jitter():
     steps = torch.arange(5, dtype=torch.float64)
     expected = steps * 0.003
     time = expected.clone()
-    time[2] -= 1.55e-7
-    time[-1] += 2.1e-7
+    time[2] -= 9e-5
+    time[-1] += 9e-5
     # The end-to-end average is too large for frame 2, but a common period exists.
-    assert not torch.allclose(time, steps * (time[-1] / 4), rtol=1e-5, atol=1e-7)
-    dt = converter._period(time, range(2, 7), 0.0025)
-    torch.testing.assert_close(time, steps * dt, rtol=1e-5, atol=1e-7)
+    assert not torch.allclose(time, steps * (time[-1] / 4), rtol=1e-5, atol=1e-4)
+    dt = resolve_sample_period(time, 0.0025, range(2, 7))
+    torch.testing.assert_close(time, steps * dt, rtol=1e-5, atol=1e-4)
 
 
 def test_competing_writes_and_failure(tmp_path, monkeypatch):
@@ -164,7 +166,7 @@ def test_supplied_sample(tmp_path):
     dest = tmp_path / "converted.pt"
     proc = run(SAMPLE, "--output", dest)
     assert proc.returncode == 0, proc.stderr
-    assert "retained=9998 trimmed_start=2 trimmed_end=0" in proc.stdout and "env.sim.dt=0.002" in proc.stdout
+    assert "retained=9998 trimmed_start=2 trimmed_end=0" in proc.stdout and "Control period: 0.002 s" in proc.stdout
     wheels = ["LF_WHEEL", "RF_WHEEL", "LH_WHEEL", "RH_WHEEL"]
     cfg = SimpleNamespace(leg_order=["leg"], wheel_order=wheels, reference_leg_order=[])
     with SAMPLE.open(newline="") as f:

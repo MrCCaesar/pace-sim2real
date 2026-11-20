@@ -485,3 +485,35 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 \
 T1–T5 已实现于 [转换入口](../../scripts/pace/csv_data_converter.py)、[专项测试](../../tests/test_csv_data_converter.py) 和 [README 用法](../../README.md#从实机-csv-转换参考数据)。输出先在同目录完整序列化，再以排他硬链接发布。此操作要求输出文件系统支持硬链接。
 
 运行上文的完整 pytest 命令，29 项通过、0 跳过、35 条 PyTorch JIT 弃用警告。样例轮速和期望值已按源行独立复算，共 9,998 帧；实际严格加载器在 2 ms 成功、2.5 ms 拒绝。X5 任务正确报告未知关节。已覆盖并发创建、别名保护、写入失败清理和非均匀时间。最终类型标注调整后以相同环境复跑 `tests/test_csv_data_converter.py::test_supplied_sample`，1 项通过。输出使用临时路径。Ruff 检查、格式检查和 `git diff --check` 均通过；`uvx --offline pyright --pythonpath .venv/bin/python scripts/pace/csv_data_converter.py` 为 0 错误、0 警告。上述检查在 CPU 上执行，正式 Verify 待批准。
+
+## CR9 离线滤波时间校验实施计划（Plan · Approved）
+
+**已确认。** ADR 0019、必填 --task 的接口及 CR9-A1–A5 已批准。任务优先、固定网格回退，滤波和频谱共用最终采样率。用户自行配置拟合。
+
+| 任务 | 依赖 | 交付与检查 | 验收 |
+| --- | --- | --- | --- |
+| CR9-T1 共享固定周期判定 | 无 | 在 src/pace_sim2real/utils 下集中现有转换器的网格判断与容差，转换器调用共享逻辑并保留 CSV 行号。覆盖任务周期优先、回退交集、严格递增、有限性、长度与无解情况。按 1e-4 s 与 1e-5 修正两个基线用例的输入和预期，保留边界与回退的检出能力。 | A2、A3 |
+| CR9-T2 接入注册任务 | T1 | 滤波 CLI 增加必填 --task，沿用转换器的注册配置读取路径，用 sim.dt × decimation 调用共享校验。测试省略任务、未注册任务、无效周期、无可行网格和输出防覆盖；对同一任务及时间序列比较两端的判定和周期。 | A2、A3、A5 |
+| CR9-T3 统一滤波与频谱的采样率 | T2 | 滤波入口只求一次周期，将 1/dt 用于 Butterworth、Nyquist 边界、频谱、频带诊断及图形。用 2.5 ms 回退记录对照 400 Hz 的参考滤波和 FFT 频率栅格，检查时间与目标逐值保留。 | A1、A4 |
+| CR9-T4 更新用法与端到端回归 | T3 | 更新 README 的滤波示例及现有 CLI 测试调用。对指定 X3mini CSV 在临时目录运行转换及滤波，核对原始时间、目标、四列轮速及 9999 帧；运行两个现有专项测试模块，记录结果供 Verify 逐条核查。 | A1–A5 |
+
+**计划验证。** CPU 专项命令为 `MPLBACKEND=Agg PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/bin/python -m pytest -q tests/test_csv_data_converter.py tests/test_filter_chirp_data.py`。真实样例使用任务 Isaac-Pace-Sevnce-X3mini-v0，滤波参数 --cutoff_hz 10 --analysis_band_hz 1 5 --plot，绘图采用 Agg。对比任务周期 0.002 s 和采样率 500 Hz。回退样例独立验证 400 Hz。运行时以临时输出路径避免覆盖原数据。
+
+**前提与交接。** 真实样例依赖本机数据目录；两项旧容差用例的研究阶段失败已记录。用户已批准 T1–T4 并进入 Implement。正式 Verify 另行进入。
+
+### CR9 Implement 交接
+
+T1–T4 已实施。共享任务读取与周期选择位于 src/pace_sim2real/utils/sample_period.py，两个入口调用同一规则，滤波器将一次计算的 fs 传给诊断。README 与两个专项测试模块已同步。
+
+专项命令 `MPLBACKEND=Agg PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 OMP_NUM_THREADS=2 .venv/bin/python -m pytest -q tests/test_csv_data_converter.py tests/test_filter_chirp_data.py` 得到 70 passed、1 skipped、35 条 PyTorch JIT 弃用警告。跳过的旧测试依赖缺失的 data/Isaac-Pace-Sevnce-X5-v0/motor_sweep_simulated/data.csv。500 Hz 任务优先和 400 Hz 回退分别核对截止边界、SciPy 滤波输出和 FFT 频率栅格；原先失败的两个网格测试通过。
+
+实机样例在仓库根目录以如下命令运行，输出位于临时目录：
+
+```bash
+out=$(mktemp -d /tmp/cr9-impl.XXXXXX)
+task=Isaac-Pace-Sevnce-X3mini-v0
+.venv/bin/python scripts/pace/csv_data_converter.py "data/$task/motor_test_1795082517117/data.csv" --task "$task" --output "$out/raw.pt"
+MPLBACKEND=Agg .venv/bin/python scripts/pace/filter_chirp_data.py "$out/raw.pt" --task "$task" --cutoff_hz 10 --analysis_band_hz 1 5 --plot
+```
+
+转换器打印 0.002 s。独立对比 raw.pt 与 raw_filtered.pt 确认时间及目标逐值相等，9999 × 4 实测轮速等于 SciPy 按 500 Hz 计算并转回 float32 的结果。Agg 绘图分支执行成功。Ruff 对五个 Python 文件的检查、格式检查及 git diff --check 通过。

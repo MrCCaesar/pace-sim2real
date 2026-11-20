@@ -8,7 +8,6 @@ import os
 import tempfile
 from ctypes import c_float
 from pathlib import Path
-from typing import Any, cast
 
 import torch
 
@@ -89,33 +88,6 @@ def _read(path, legs, wheels):
     return data, groups, lines, (total, leading, trailing)
 
 
-def _period(time, lines, task_dt):
-    if not math.isfinite(task_dt) or task_dt <= 0:
-        raise ValueError("Invalid task control period")
-    elapsed = time - time[0]
-    steps = torch.arange(len(time), dtype=torch.float64)
-
-    def matches(dt):
-        return torch.isclose(elapsed, steps * dt, atol=1e-7, rtol=1e-5)
-
-    if matches(task_dt).all():
-        return task_dt
-    low, high = 0.0, math.inf
-    for i, t in enumerate(elapsed.tolist()[1:], 1):
-        prior = (i * low * (1 - 1e-5) - 1e-7, i * high * (1 + 1e-5) + 1e-7)
-        low = max(low, (t - 1e-7) / (i * (1 + 1e-5)))
-        high = min(high, (t + 1e-7) / (i * (1 - 1e-5)))
-        if low > high or not math.isfinite(t):
-            raise ValueError(f"CSV line {lines[i]}: elapsed time {t} s outside fixed grid {prior} s")
-    period = min(max(elapsed[-1].item() / (len(time) - 1), low), high)
-    for dt in (period, math.nextafter(period, (low + high) / 2), (low + high) / 2):
-        valid = matches(dt)
-        if valid.all():
-            return dt
-    i = int((~valid).nonzero()[0].item())
-    raise ValueError(f"CSV line {lines[i]}: elapsed time {elapsed[i].item()} s exceeds grid at {i * dt} s")
-
-
 def _save(path, data):
     with tempfile.NamedTemporaryFile(dir=path.parent) as stream:
         torch.save(data, stream)
@@ -135,22 +107,16 @@ def main(argv=None):
 
     from gymnasium.error import Error as GymError
 
-    from isaaclab.cli import load_external_tasks
-
-    from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
-
     from pace_sim2real.utils.collection_contracts import resolve_joint_groups
     from pace_sim2real.utils.paths import ISAAC_COLLECTION_FILENAME
+    from pace_sim2real.utils.sample_period import load_recording_task, resolve_sample_period
 
     try:
-        load_external_tasks()
-        cfg = cast(Any, load_cfg_from_registry(args.task, "env_cfg_entry_point"))
-        if not (hasattr(cfg, "sim2real") and hasattr(cfg, "sim") and hasattr(cfg, "decimation")):
-            raise ValueError(f"{args.task} does not provide a PACE environment configuration")
+        cfg = load_recording_task(args.task)
         legs, wheels = resolve_joint_groups(cfg.sim2real)
         data, groups, lines, (total, leading, trailing) = _read(args.csv, legs, wheels)
         task_dt = cfg.sim.dt * cfg.decimation
-        dt = _period(data["time"], lines, task_dt)
+        dt = resolve_sample_period(data["time"], task_dt, lines)
         output = args.csv.parent / (args.output or ISAAC_COLLECTION_FILENAME)
         _save(output, data)
     except (OSError, ValueError, KeyError, csv.Error, AttributeError, GymError) as exc:

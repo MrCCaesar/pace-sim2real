@@ -413,3 +413,11 @@ uv run python scripts/pace/csv_data_converter.py "$csv" --task Isaac-Pace-Sevnce
 ```
 
 此例的拟合声明是 `env.sim2real.reference_leg_order=[]`、`env.sim2real.reference_wheel_order=["LF_WHEEL","RF_WHEEL","LH_WHEEL","RH_WHEEL"]`、`env.sim.dt=0.002`、`env.decimation=1`。`env.sim2real.data_dir` 可指向转换产物的绝对路径。[拟合入口](../../scripts/pace/fit.py#L109)
+
+## CR9 滤波任务与固定周期接口（Specify · Approved）
+
+命令为 `uv run python scripts/pace/filter_chirp_data.py INPUT --task TASK [原有滤波选项]`。TASK 为必填的已注册 PACE 任务 ID（字符串），使用任务默认配置的 sim.dt × decimation（秒）。离线读取配置，无需创建仿真环境。已有滤波命令需补充任务 ID。INPUT、输出路径、防覆盖、截止、阶数、频带、绘图与张量字段沿用 CR5、CR6。
+
+两入口共享的内部周期判定接收一维浮点时间张量 [N]（秒，N ≥ 2）及有限正任务周期，返回有限正周期（秒）。时间必须有限且严格递增，以 float64 比较每帧相对首帧的累计时间与 i × dt，绝对容差 1e-4 s，相对容差 1e-5。优先返回符合全序列的任务周期。回退沿用转换器各帧可行区间求交、以首末平均周期在交集中选取候选及浮点边界复核。没有可行周期时报错。调用方保留其输入坐标，CSV 可报告原 CSV 行。两端在同一任务、同一时间值下选择相同的 dt。
+
+一次滤波调用中解析一次周期，以 fs = 1 / dt（Hz）执行滤波、频谱及频带诊断。输出 time 与输入同形状、同 dtype、逐值一致，目标信号逐值保留，仅实测信号应用低通。

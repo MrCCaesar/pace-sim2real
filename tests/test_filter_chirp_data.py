@@ -17,6 +17,7 @@ from scipy.signal.windows import hann
 ROOT = Path(__file__).resolve().parents[1]
 script = runpy.run_path(str(ROOT / "scripts/pace/filter_chirp_data.py"))
 main = script["main"]
+TASK = "Isaac-Pace-Sevnce-X3mini-v0"
 load_reference_data = runpy.run_path(str(ROOT / "src/pace_sim2real/utils/collection_contracts.py"))[
     "load_reference_data"
 ]
@@ -60,7 +61,7 @@ def test_cli_preserves_contract_and_filters_columns_independently(tmp_path, legs
     data = record(legs, wheels)
     torch.save(data, path)
     before = digest(path)
-    assert main([str(path), "--order", str(order), "--cutoff_hz", str(cutoff)]) == 0
+    assert main(["--task", TASK, str(path), "--order", str(order), "--cutoff_hz", str(cutoff)]) == 0
     cfg = SimpleNamespace(
         leg_order=[f"L{i}" for i in range(legs or 0)], wheel_order=[f"W{i}" for i in range(wheels or 0)]
     )
@@ -87,7 +88,10 @@ def test_cli_preserves_contract_and_filters_columns_independently(tmp_path, legs
         ({"des_dof_pos": torch.full((160, 2), torch.inf)}, [], "finite"),
         ({"dof_pos": torch.empty(160, 0), "des_dof_pos": torch.empty(160, 0)}, [], "one recorded"),
         ({"time": torch.zeros(160)}, [], "strictly increasing"),
-        ({"time": torch.arange(160).double().square() / 1e4}, [], "uniformly"),
+        ({"time": torch.tensor([1.0, 0.5])}, [], "strictly increasing"),
+        ({"time": torch.tensor([0.0, float("nan")])}, [], "finite"),
+        ({"time": torch.tensor([1.0])}, [], "at least two"),
+        ({"time": torch.arange(160).double().square() / 1e4}, [], "fixed grid"),
         ({"time": torch.arange(15).double() / 160}, [], "too short"),
     ],
 )
@@ -95,7 +99,7 @@ def test_invalid_record_or_design_leaves_no_output(tmp_path, capsys, change, arg
     path = tmp_path / "input.pt"
     torch.save(record() | change, path)
     with pytest.raises(SystemExit) as exc:
-        main([str(path), *args])
+        main(["--task", TASK, str(path), *args])
     assert exc.value.code != 0 and error in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == [path]
 
@@ -114,7 +118,7 @@ def test_existing_outputs_are_preserved(tmp_path, alias):
         output.write_bytes(b"existing")
     before = digest(source), digest(output)
     with pytest.raises(SystemExit):
-        main([str(source), "--output", str(output)])
+        main(["--task", TASK, str(source), "--output", str(output)])
     assert (digest(source), digest(output)) == before
 
 
@@ -129,7 +133,7 @@ def test_interrupted_save_removes_partial_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(torch, "save", fail)
     with pytest.raises(SystemExit):
-        main([str(path)])
+        main(["--task", TASK, str(path)])
     assert list(tmp_path.iterdir()) == [path] and digest(path) == before
 
 
@@ -155,7 +159,7 @@ def test_synthetic_passband_delay_and_rmse(tmp_path):
         },
         source,
     )
-    assert main([str(source)]) == 0
+    assert main(["--task", TASK, str(source)]) == 0
     output = torch.load(tmp_path / "tones_filtered.pt", weights_only=True)
     filtered = output["dof_pos"].numpy()
     middle = slice(4000, -4000)
@@ -180,7 +184,7 @@ def test_real_x5_file(tmp_path):
     assert digest(X5) == X5_SHA256, "CR5-A3 requires the original research capture"
     original = torch.load(X5, map_location="cpu", weights_only=True)
     path = tmp_path / "x5_filtered.pt"
-    assert main([str(X5), "--output", str(path)]) == 0
+    assert main(["--task", TASK, str(X5), "--output", str(path)]) == 0
     channels = tomllib.loads((ROOT / "config/x5_collection.toml").read_text())["channels"]
     cfg = SimpleNamespace(leg_order=channels["position_joints"], wheel_order=channels["velocity_joints"])
     output = assert_contract(original, path, cfg, 0.0025)
@@ -259,7 +263,7 @@ def test_invalid_analysis_band_protects_files(tmp_path, limits):
     path = tmp_path / "record.pt"
     torch.save(record(), path)
     with pytest.raises(SystemExit) as exc:
-        main([str(path), "--analysis_band_hz", *limits])
+        main(["--task", TASK, str(path), "--analysis_band_hz", *limits])
     assert exc.value.code and list(tmp_path.iterdir()) == [path]
 
 
@@ -270,7 +274,7 @@ def test_band_changes_only_spectral_selection(tmp_path, capsys, legs, wheels):
     reports, saved = [], []
     for hz in [("0.1", "10"), ("1000", "2000")]:
         out = tmp_path / f"band-{hz[0]}.pt"
-        assert main([str(path), "--output", str(out), "--analysis_band_hz", *hz]) == 0
+        assert main(["--task", TASK, str(path), "--output", str(out), "--analysis_band_hz", *hz]) == 0
         report = capsys.readouterr().out
         assert report.splitlines()[0] == str(out)
         assert ("Position (dof_pos)" in report) == bool(legs)
@@ -295,7 +299,7 @@ def test_band_changes_only_spectral_selection(tmp_path, capsys, legs, wheels):
 )
 def test_x5_diagnostics_in_cli_report(tmp_path, capsys, hz, expected):
     assert digest(X5) == X5_SHA256
-    assert main([str(X5), "--output", str(tmp_path / "out.pt"), "--cutoff_hz", str(hz)]) == 0
+    assert main(["--task", TASK, str(X5), "--output", str(tmp_path / "out.pt"), "--cutoff_hz", str(hz)]) == 0
     text = capsys.readouterr().out
     assert text.count("1643 joint-frequency pairs, 1.15–8.95 Hz") == 2
     assert text.count("613 joint-frequency pairs, 1.15–8.95 Hz") == 2
@@ -315,12 +319,12 @@ def test_plot_uses_recorded_columns_and_one_sided_raw_spectrum(tmp_path, capsys,
     path = tmp_path / "raw.pt"
     torch.save(data, path)
     first, second = tmp_path / "off.pt", tmp_path / "on.pt"
-    assert main([str(path), "--output", str(first)]) == 0
+    assert main(["--task", TASK, str(path), "--output", str(first)]) == 0
     plain = capsys.readouterr().out.splitlines()[1:]
     shown = []
     monkeypatch.setattr(plt, "show", lambda: shown.extend(plt.get_fignums()))
     try:
-        assert main([str(path), "--output", str(second), "--plot"]) == 0
+        assert main(["--task", TASK, str(path), "--output", str(second), "--plot"]) == 0
         assert capsys.readouterr().out.splitlines()[1:] == plain
         filtered = torch.load(second, weights_only=True)
         for key, value in torch.load(first, weights_only=True).items():
@@ -369,10 +373,66 @@ def test_display_failure_reports_saved_output(tmp_path, capsys, monkeypatch):
     torch.save(record(), path)
     try:
         with pytest.raises(SystemExit) as exc:
-            main([str(path), "--plot"])
+            main(["--task", TASK, str(path), "--plot"])
         output = path.with_stem("input_filtered")
         assert exc.value.code and output.exists()
         error = capsys.readouterr().err
         assert str(output) in error and "display unavailable" in error
     finally:
         plt.close("all")
+
+
+def test_missing_or_unknown_task(tmp_path, capsys):
+    path = tmp_path / "record.pt"
+    torch.save(record(), path)
+    for args, message in (([], "--task"), (["--task", "no-such-task-v0"], "no-such-task")):
+        with pytest.raises(SystemExit) as error:
+            main([str(path), *args])
+        assert error.value.code and message in capsys.readouterr().err
+        assert list(tmp_path.iterdir()) == [path]
+
+
+def test_invalid_task_period(tmp_path, monkeypatch, capsys):
+    from pace_sim2real.utils import sample_period
+
+    cfg = SimpleNamespace(sim=SimpleNamespace(dt=0), decimation=1)
+    monkeypatch.setattr(sample_period, "load_recording_task", lambda task: cfg)
+    path = tmp_path / "record.pt"
+    torch.save(record(), path)
+    with pytest.raises(SystemExit):
+        main([str(path), "--task", TASK])
+    assert "Invalid task control period" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("dt", [0.002, 0.0025])
+def test_task_and_fallback_rate_in_filter_and_spectrum(tmp_path, monkeypatch, capsys, dt):
+    data = record(legs=None, wheels=1)
+    time = torch.arange(160, dtype=torch.float64) * dt
+    time[3] -= 0.00008
+    time[4] += 0.00008
+    # A jittered endpoint distinguishes the task period from the end-to-end mean.
+    if dt == 0.002:
+        time[-1] += 0.00005
+    data["time"] = time
+    path = tmp_path / "wheel.pt"
+    torch.save(data, path)
+    fs = 1 / dt
+    freq_axes = []
+    diagnostics = script["_group_diagnostics"]
+
+    def inspect(*args):
+        metrics, freq, amplitude = diagnostics(*args)
+        freq_axes.append(freq)
+        return metrics, freq, amplitude
+
+    monkeypatch.setitem(main.__globals__, "_group_diagnostics", inspect)
+    with pytest.raises(SystemExit):
+        main([str(path), "--task", TASK, "--cutoff_hz", str(fs / 2)])
+    assert "Nyquist" in capsys.readouterr().err
+    assert main([str(path), "--task", TASK, "--cutoff_hz", "10"]) == 0
+    actual = torch.load(path.with_stem("wheel_filtered"), weights_only=True)
+    expected = signal.sosfiltfilt(signal.butter(4, 10, fs=fs, output="sos"), data["dof_vel"].double().numpy(), axis=0)
+    np.testing.assert_array_equal(actual["dof_vel"].numpy(), expected.astype(np.float32))
+    np.testing.assert_allclose(freq_axes[0], np.fft.rfftfreq(len(time), dt), rtol=1e-12)
+    assert torch.equal(actual["time"], time) and torch.equal(actual["des_dof_vel"], data["des_dof_vel"])

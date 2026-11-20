@@ -6,7 +6,7 @@ PACE 用 CMA-ES 从期望轨迹和实测响应中辨识关节惯量、阻尼、�
 | --- | --- | --- |
 | 用固定参数采集腿部位置和轮速 | `scripts/pace/data_collection.py --task 任务名` | `data/<任务名>/chirp_data.pt` |
 | 用原生 MuJoCo 采集 X5 传感器数据 | `scripts/pace/data_collection_mujoco.py` | `data/Isaac-Pace-Sevnce-X5-v0/mujoco_chirp_data.pt` |
-| 对采集记录离线滤波 | `scripts/pace/filter_chirp_data.py 输入文件` | 默认在同目录保存 `<原文件主名>_filtered.pt` |
+| 对采集记录离线滤波 | `scripts/pace/filter_chirp_data.py 输入文件 --task 任务名` | 默认在同目录保存 `<原文件主名>_filtered.pt` |
 | 从采集或实机记录中辨识参数 | `scripts/pace/fit.py --task 任务名` | 运行目录中的 `best_result.pt` 和优化日志 |
 | 把估计参数写回仿真，验证其他轨迹 | `scripts/pace/replay.py --task 任务名` | 仿真响应，可绘图或另存 |
 | 查看已完成的拟合 | `scripts/pace/plot_trajectory.py`、TensorBoard | 逐关节响应、评分、参数分布和均值 |
@@ -105,14 +105,14 @@ uv run python scripts/pace/replay.py --task "$task" --visualizer none \
 
 ## 对实测位置和轮速离线滤波
 
-脚本在 CPU 上逐关节处理 `dof_pos` 和 `dof_vel`，支持纯位置、纯速度和混合记录。输出保留全部采样时刻、期望指令、字段、数据类型和列序。默认使用四阶 Butterworth 前后向低通，`--order` 和 `--cutoff_hz` 分别设置单程阶数和单程截止频率。采样率根据以秒为单位的均匀时间戳计算，截止频率须低于采样率的一半。
+脚本在 CPU 上逐关节处理 `dof_pos` 和 `dof_vel`，支持纯位置、纯速度和混合记录。输出保留全部采样时刻、期望指令、字段、数据类型和列序。默认使用四阶 Butterworth 前后向低通，`--order` 和 `--cutoff_hz` 分别设置单程阶数和单程截止频率。滤波器与 CSV 转换器优先采用 `--task` 的控制周期，按每帧相对首帧的累计时间校验固定周期网格（绝对容差 0.0001 s，相对容差 0.00001）。任务周期不匹配时，两者从整段记录选择可行周期；无可行周期则报错。滤波和频谱使用同一采样率，截止频率须低于该采样率的一半。
 
 ```bash
 task=Isaac-Pace-Sevnce-X5-v0
 record=data/$task/mujoco_0.1_10Hz_kp1500_kd30_chirp_data.pt
-uv run python scripts/pace/filter_chirp_data.py "$record"
-uv run python scripts/pace/filter_chirp_data.py "$record" --cutoff_hz 25 --order 4 --output "data/$task/x5_25Hz.pt"
-uv run python scripts/pace/filter_chirp_data.py "$record" --analysis_band_hz 0.1 4 --plot --output "data/$task/x5_band_0.1_4.pt"
+uv run python scripts/pace/filter_chirp_data.py "$record" --task "$task"
+uv run python scripts/pace/filter_chirp_data.py "$record" --task "$task" --cutoff_hz 25 --order 4 --output "data/$task/x5_25Hz.pt"
+uv run python scripts/pace/filter_chirp_data.py "$record" --task "$task" --analysis_band_hz 0.1 4 --plot --output "data/$task/x5_band_0.1_4.pt"
 uv run python scripts/pace/fit.py --task "$task" env.sim2real.data_dir=mujoco_0.1_10Hz_kp1500_kd30_chirp_data_filtered.pt
 ```
 
