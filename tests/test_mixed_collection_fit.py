@@ -223,21 +223,22 @@ def run_backend_contract(backend, optimization, output, decimation=1):
         dt=0.0025, gravity=(0.0, 0.0, 0.0), device="cuda:0", physics=physics, use_newton_actuators=False
     )
     with launch_simulation(sim_cfg, args):
+        from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
         from isaaclab.assets import ArticulationCfg
         from isaaclab.envs import ManagerBasedEnv, ManagerBasedEnvCfg, mdp
         from isaaclab.managers import ObservationGroupCfg, ObservationTermCfg
         from isaaclab.scene import InteractiveSceneCfg
         from isaaclab.sim import UsdFileCfg
-        from pxr import Gf, Usd, UsdGeom, UsdPhysics
 
         from pace_sim2real.optim import CMAESOptimizer
         from pace_sim2real.utils import PaceDCMotorCfg
+        from pace_sim2real.utils import trajectory_simulation as collection
         from pace_sim2real.utils.collection_contracts import (
             load_reference_data,
             resolve_action_mapping,
         )
 
-        collection = load_module("pace_runtime_collection", "scripts/pace/data_collection.py")
         fitting = load_module("pace_runtime_fit", "scripts/pace/fit.py")
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
@@ -366,13 +367,15 @@ def run_backend_contract(backend, optimization, output, decimation=1):
                     torch.testing.assert_close(efforts[:, lp], expected_p)
                     torch.testing.assert_close(efforts[:, wv], expected_v)
                 (output / "result.json").write_text(
-                    json.dumps({
-                        "backend": backend,
-                        "decimation": decimation,
-                        "physics_steps": 40,
-                        "compute_calls": len(compute_records),
-                        "delay_steps": 2,
-                    })
+                    json.dumps(
+                        {
+                            "backend": backend,
+                            "decimation": decimation,
+                            "physics_steps": 40,
+                            "compute_calls": len(compute_records),
+                            "delay_steps": 2,
+                        }
+                    )
                     + "\n"
                 )
                 print("CR2_DECIMATION_PASS", backend, flush=True)
@@ -679,9 +682,7 @@ def test_collection_records_seconds_and_rejects_invalid_runs():
 import importlib.util
 from types import SimpleNamespace as NS
 import torch
-spec = importlib.util.spec_from_file_location("collection", "scripts/pace/data_collection.py")
-collection = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(collection)
+from pace_sim2real.utils import trajectory_simulation as collection
 for fault in (None, "nonfinite_sample", "nonfinite_final", "termination", "time_reset", "closed"):
     position_type = type("JointPositionAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
     velocity_type = type("JointVelocityAction", (), {"__module__": "isaaclab.envs.mdp.actions.joint_actions"})
@@ -693,7 +694,8 @@ for fault in (None, "nonfinite_sample", "nonfinite_final", "termination", "time_
         joint_vel=NS(torch=torch.tensor([[20., 30.], [20., 30.]]))))
     env = NS(num_envs=2, device="cpu", step_dt=.01, physics_dt=.005, _sim_step_counter=0,
              cfg=NS(sim2real=NS(leg_order=["leg"], wheel_order=["wheel"]), sim=NS(use_newton_actuators=False)),
-             scene={"robot": robot}, action_manager=NS(active_terms=["v", "p"], get_term=lambda name: {"v": vel, "p": pos}[name]))
+             scene={"robot": robot},
+             action_manager=NS(active_terms=["v", "p"], get_term=lambda name: {"v": vel, "p": pos}[name]))
     env.sim = NS(is_running=lambda: not (fault == "closed" and env._sim_step_counter == 2))
     commands = []
     def step(actions):
@@ -735,6 +737,31 @@ for fault in (None, "nonfinite_sample", "nonfinite_final", "termination", "time_
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_fixed_collection_parameters_follow_backend_friction_model():
+    import subprocess
+
+    script = """
+import warnings
+from types import SimpleNamespace as NS
+from isaaclab_newton.physics import NewtonCfg
+from isaaclab_physx.physics import PhysxCfg
+from pace_sim2real.utils.fit_replay import JointParameters
+from pace_sim2real.utils.trajectory_simulation import _dynamic_friction
+
+params = JointParameters.collection_defaults(1, 1)
+cfg = NS(physics=PhysxCfg())
+env = NS(unwrapped=NS(sim=NS(cfg=cfg)))
+assert _dynamic_friction(env, params) is params.dynamic_friction
+assert params.dynamic_friction.equal(0.5 * params.friction)
+cfg.physics = NewtonCfg()
+with warnings.catch_warnings(record=True) as emitted:
+    warnings.simplefilter("always")
+    assert _dynamic_friction(env, params) is None
+assert any("single" in str(item.message) or "dry-friction" in str(item.message) for item in emitted)
+"""
+    subprocess.run([sys.executable, "-c", script], cwd=ROOT, check=True, timeout=60)
+
+
 def test_collection_and_fit_parse_without_importing_isaac_sim():
     import os
     import subprocess
@@ -747,7 +774,7 @@ class RejectIsaacSim:
         if fullname == "isaacsim" or fullname.startswith("isaacsim."):
             raise AssertionError("CLI parsing imported Isaac Sim")
 sys.meta_path.insert(0, RejectIsaacSim())
-for name in ("data_collection", "fit"):
+for name in ("data_collection", "replay", "fit"):
     spec = importlib.util.spec_from_file_location(name, f"scripts/pace/{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -856,7 +883,8 @@ for fault in (None, "decimation", "transient", "final", "termination", "clock"):
         if fault == "clock": env._sim_step_counter = 0
         return None, None, torch.tensor([fault == "termination", False]), torch.zeros(2, dtype=torch.bool), None
     env.reset, env.step = reset, step
-    data = {"time": torch.tensor([0., .01], dtype=torch.float64), "dof_pos": torch.zeros(2, 1), "des_dof_pos": torch.zeros(2, 1)}
+    data = {"time": torch.tensor([0., .01], dtype=torch.float64),
+            "dof_pos": torch.zeros(2, 1), "des_dof_pos": torch.zeros(2, 1)}
     opt = CMAESOptimizer(torch.zeros(5, 2), 2, sys.argv[1], ["leg"], 1, data, "cpu", reference_settings={"dt": .01})
     try:
         fit.fit_reference(env, data, opt)
@@ -1126,3 +1154,41 @@ def test_subset_keeps_default_mechanics_and_restores_each_drive(monkeypatch):
         assert q["joint_ids"].tolist() == [0, 2, 1, 3]
         torch.testing.assert_close(q["position"], torch.tensor([[1.0, 3.0, 2.0, 4.0]]).repeat(2, 1))
         torch.testing.assert_close(v["velocity"], torch.tensor([[0.0, 0.0, float(candidate), 8.0]]).repeat(2, 1))
+
+    # Collection uses the drive's actual delay mode. Its fixed delay applies
+    # to every member of a participating drive even when only one leg is swept.
+    replay = load_module("collection_parameter_defaults", "src/pace_sim2real/utils/fit_replay.py")
+    params = replay.JointParameters.collection_defaults(1, 0)
+    env = SimpleNamespace(scene={"robot": robot}, cfg=SimpleNamespace(sim2real=cfg), device="cpu", num_envs=2)
+    a, b = robot.actuators.values()
+    a.cfg.delay_mode = "effort"
+    control = subset.SubsetControl(env, ["p1"], [], check_delay_mode=False)
+    with pytest.raises(ValueError, match="capacity"):
+        control.check_delay(params.delay_steps)
+    a.cfg.max_delay = 5
+    control.check_delay(params.delay_steps)
+    delay = torch.full((2,), params.delay_steps)
+    control.apply(
+        params.armature.expand(2, 1),
+        params.damping.expand(2, 1),
+        params.friction.expand(2, 1),
+        params.dynamic_friction.expand(2, 1),
+        params.bias.expand(2, 1),
+        delay,
+        torch.tensor([0.5]),
+        None,
+    )
+    torch.testing.assert_close(a.update_time_lags.call_args.args[0], torch.tensor([5, 5]))
+    b.update_time_lags.assert_not_called()
+    torch.testing.assert_close(a.update_encoder_bias.call_args.args[0], torch.tensor([[0.1, 0.05]]).repeat(2, 1))
+    mechanics = robot.write_joint_friction_coefficient_to_sim_index.call_args.kwargs
+    assert mechanics["joint_ids"].tolist() == [0]
+    torch.testing.assert_close(mechanics["joint_dynamic_friction_coeff"], torch.full((2, 1), 0.025))
+    torch.testing.assert_close(
+        robot.write_joint_velocity_to_sim_index.call_args.kwargs["velocity"],
+        torch.tensor([[5.0, 0.0, 6.0, 8.0]]).repeat(2, 1),
+    )
+    torch.testing.assert_close(
+        robot.write_joint_position_to_sim_index.call_args.kwargs["position"],
+        torch.tensor([[0.55, 3.0, 2.0, 4.0]]).repeat(2, 1),
+    )

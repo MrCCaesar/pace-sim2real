@@ -8,7 +8,7 @@ PACE 用 CMA-ES 从期望轨迹和实测响应中辨识关节惯量、阻尼、�
 | 用原生 MuJoCo 采集 X5 传感器数据 | `scripts/pace/data_collection_mujoco.py` | `data/Isaac-Pace-Sevnce-X5-v0/mujoco_chirp_data.pt` |
 | 对采集记录离线滤波 | `scripts/pace/filter_chirp_data.py 输入文件` | 默认在同目录保存 `<原文件主名>_filtered.pt` |
 | 从采集或实机记录中辨识参数 | `scripts/pace/fit.py --task 任务名` | 运行目录中的 `best_result.pt` 和优化日志 |
-| 把估计参数写回仿真，验证其他轨迹 | `scripts/pace/data_collection.py --task 任务名 --fit_result` | 仿真响应，可绘图或另存 |
+| 把估计参数写回仿真，验证其他轨迹 | `scripts/pace/replay.py --task 任务名` | 仿真响应，可绘图或另存 |
 | 查看已完成的拟合 | `scripts/pace/plot_trajectory.py`、TensorBoard | 逐关节响应、评分、参数分布和均值 |
 
 ## 安装与模型准备
@@ -31,6 +31,7 @@ cat ../IsaacLab/VERSION
 | Isaac Lab 任务名 | 辨识通道 | 模型准备 |
 | --- | --- | --- |
 | `Isaac-Pace-Anymal-D-v0` | 12 个腿关节，跟踪位置 | 使用 Isaac Lab 的 ANYmal D 资产 |
+| `Isaac-Pace-Sevnce-X3mini-v0` | 12 个腿关节跟踪位置，4 个轮关节跟踪速度 | Isaac Lab 读取本地 `src/pace_sim2real/assets/data/robots/sevnce/x3mini/usd/x3mini.usd` |
 | `Isaac-Pace-Sevnce-X5-v0` | 12 个腿关节跟踪位置，4 个轮关节跟踪速度 | 本地准备 X5 的 USD、MJCF 和相应网格。Isaac Lab 读取 `src/pace_sim2real/assets/data/robots/sevnce/x5/usd/x5.usd`，原生 MuJoCo 默认读取该机器人目录下的 `mjcf/x5_calibration.xml` |
 
 ## 快速跑通采集、拟合和回放
@@ -41,7 +42,7 @@ cat ../IsaacLab/VERSION
 task=Isaac-Pace-Sevnce-X5-v0
 uv run python scripts/pace/data_collection.py --task "$task" --visualizer none --duration 1
 uv run python scripts/pace/fit.py --task "$task" --num_envs 2 env.sim2real.cmaes.max_iteration=3
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visualizer none \
+uv run python scripts/pace/replay.py --task "$task" --visualizer none \
   --trajectory_file "data/$task/chirp_data.pt" --output "data/$task/replay.pt"
 ```
 
@@ -68,7 +69,16 @@ uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visu
 | 设备与录像 | `env.sim.device=cuda:0`、`--video`、`--video_length`、`--video_interval` | 采集设备取自任务配置。录像需要支持相机的渲染配置，可用 `--extra video` 加载录像依赖，长度和间隔按步设置 |
 | 固定采集参数 | `armature=0.1`、`damping=4.5`、`friction=0.05` | PhysX 动摩擦取 `0.025`，Newton 使用单一干摩擦。腿编码器偏置为 `0.05 rad`，轮偏置为零，共享延迟为 5 步 |
 
-扫频表达式为 `期望值 = (中心 + sin(相位)) × 幅值 × 方向`。腿部每条腿的三个中心为 `[0, 0.4, -1.4]`（无量纲），幅值为 `[0.25, 0.5, 0.99] rad`。方向同时作用于中心和振荡，右前、右后腿的第一个关节取 `-1`，其余取 `+1`。轮速中心为零，四轮幅值均为 `10 rad/s`，方向均为 `+1`。Isaac Lab 的这些值定义在采集脚本的 `_chirp_targets` 中。
+扫频表达式为 `期望值 = (中心 + sin(相位)) × 幅值 × 方向`。腿部每条腿的三个中心为 `[0, 0.4, -1.4]`（无量纲），幅值为 `[0.25, 0.5, 0.99] rad`。方向同时作用于中心和振荡，右前、右后腿的第一个关节取 `-1`，其余取 `+1`。轮速中心为零，四轮幅值均为 `10 rad/s`，方向均为 `+1`。Isaac Lab 的这些值定义在[共用轨迹模块](src/pace_sim2real/utils/trajectory_simulation.py)中。
+
+只采部分关节时，分别设置位置组和速度组。每组的 `None` 取任务全组，`[]` 跳过该组，显式列表决定输出列序。例如，只采 X3mini 左前轮可运行：
+
+```bash
+uv run python scripts/pace/data_collection.py --task Isaac-Pace-Sevnce-X3mini-v0 --visualizer none \
+  'env.sim2real.reference_leg_order=[]' 'env.sim2real.reference_wheel_order=["LF_WHEEL"]'
+```
+
+该文件含 `time`、`dof_vel` 和 `des_dof_vel`。只有所选轮接收扫频，其余关节沿用部分拟合的保持目标与任务默认参数。固定的 5 步延迟作用于包含选中关节的整个执行器组。拟合及文件回放时使用同一列序声明。
 
 ## 使用原生 MuJoCo 采集 X5
 
@@ -79,7 +89,7 @@ task=Isaac-Pace-Sevnce-X5-v0
 uv run python scripts/pace/data_collection_mujoco.py --config config/x5_collection.toml --duration 1
 uv run python scripts/pace/fit.py --task "$task" --num_envs 2 \
   env.sim2real.data_dir=mujoco_chirp_data.pt env.sim2real.cmaes.max_iteration=3
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visualizer none \
+uv run python scripts/pace/replay.py --task "$task" --visualizer none \
   --trajectory_file "data/$task/mujoco_chirp_data.pt" --output "data/$task/mujoco_replay.pt"
 ```
 
@@ -161,7 +171,7 @@ task=Isaac-Pace-Sevnce-X5-v0
 groups=('env.sim2real.reference_leg_order=["FL_hip_joint","FL_thigh_joint","FL_calf_joint"]'
         'env.sim2real.reference_wheel_order=["FL_foot_joint"]')
 uv run python scripts/pace/fit.py --task "$task" "${groups[@]}" env.sim2real.data_dir=fl.pt
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result --visualizer none \
+uv run python scripts/pace/replay.py --task "$task" --visualizer none \
   --trajectory_file "data/$task/fl.pt" "${groups[@]}"
 ```
 
@@ -178,18 +188,18 @@ uv run python scripts/pace/fit.py --task Isaac-Pace-Sevnce-X5-v0 \
 
 ## 用拟合结果验证其他轨迹
 
-`data_collection.py --fit_result` 会把最佳候选的物理参数、腿编码器偏置和共享延迟写入仿真。省略轨迹文件时，对已辨识关节生成新扫频，可观察指令跟踪效果。若关节缺少已知扫频系数，需提供 `--trajectory_file`。提供独立实测记录时，程序计算预测相对实测的误差。[回放参数校验](src/pace_sim2real/utils/fit_replay.py)
+`replay.py` 会把最佳候选的物理参数、腿编码器偏置和共享延迟写入仿真。省略轨迹文件时，对已辨识关节生成新扫频，可观察指令跟踪效果。若关节缺少已知扫频系数，需提供 `--trajectory_file`。提供独立实测记录时，程序计算预测相对实测的误差。[回放参数校验](src/pace_sim2real/utils/fit_replay.py)
 
 | 命令行选项 | 行为 |
 | --- | --- |
-| `--fit_result` 或 `--fit_result 路径` | 单独给标志时读取 `logs/pace-sim2real/<任务名>/` 最新时间戳运行下的 `best_result.pt`，该运行缺文件会报错。给路径时读取指定文件。结果须为含统一 `dt` 的配对结果，物理后端、求解器、延迟模式和各组关节名须匹配，组内顺序可按名称还原 |
+| `--fit_result` 或 `--fit_result 路径` | 省略此选项或单独给标志时读取 `logs/pace-sim2real/<任务名>/` 最新时间戳运行下的 `best_result.pt`，该运行缺文件会报错。给路径时读取指定文件。结果须为含统一 `dt` 的配对结果，物理后端、求解器、延迟模式和各组关节名须匹配，组内顺序可按名称还原 |
 | `--duration`、`--min_frequency`、`--max_frequency` | 用新扫频测试最佳候选，`--plot` 对比期望与预测 |
 | `--trajectory_file 路径` | 使用参考文件中的期望轨迹，并根据首帧测量初始化。此选项与显式扫频参数互斥。程序打印预测相对实测的位置及轮速 RMSE，`--plot` 可同时显示期望、参考测量和预测 |
 | `--output 路径` | 回放默认只计算结果。给出独立输出路径后保存响应，输入记录、拟合结果和默认采集文件受覆盖保护 |
 
 ```bash
-uv run python scripts/pace/data_collection.py --task Isaac-Pace-Sevnce-X5-v0 \
-  --fit_result --duration 3 --min_frequency 0.2 --max_frequency 4 --visualizer none --plot
+uv run python scripts/pace/replay.py --task Isaac-Pace-Sevnce-X5-v0 \
+  --duration 3 --min_frequency 0.2 --max_frequency 4 --visualizer none --plot
 ```
 
 ## 离线绘图与优化诊断

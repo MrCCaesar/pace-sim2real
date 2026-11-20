@@ -8,3 +8,6 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.jit filter=lfs diff=lfs merge=lfs -text
 *.hdf5 filter=lfs diff=lfs merge=lfs -text
+
+# Keep the small, immutable CR8 regression fixture available in source checkouts.
+.scratch/issue_4/cr8-baseline.pt -filter -diff -merge -text

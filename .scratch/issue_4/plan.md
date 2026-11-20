@@ -417,3 +417,40 @@ CR4 正式 Verify 已完成。逐工单证据、数值、全量回归三项失�
 
 - CR6-T1、T2 已在原脚本实现分组诊断、频带选择和覆盖报告。上述 pytest 命令运行 42 项，全部通过（含真实 X5 四阶 20 Hz、25 Hz）。手算与退化输入回归涵盖相位折返、常量列、无效相位、零能量和奈奎斯特端点。
 - CR6-T3 已实现绘图和中文 README 用法。在真实 X5 输入的临时副本上执行 `uv run python scripts/pace/filter_chirp_data.py "$record"` 及带 `--analysis_band_hz 0.1 4 --plot --output "$trial/x5_band4.pt"` 的命令（CPU、Agg）。两次结果的全部五个张量逐元素一致。默认带下位置、速度各有 1643、613 个有效组合；改为 0.1–4 Hz 后各有 683、235 个。绘图回归检查奇偶帧数、各列曲线及频谱；本轮未操作桌面窗口。
+
+## CR8 独立回放与部分关节采集实施计划
+
+**状态：Approved。** 用户已批准 Q3–Q5、配套接口及 CR8-A1–A5，并明确答复“批准 CR8-T1–T5，并进入 Implement”。以下任务按已批准的契约拆分。[规格与五项验收条件](spec.md#cr8-独立回放与部分关节采集specify--approved) · [接口](interfaces.md#cr8-采集与回放接口) · [入口职责](../../adr/0016-separate-replay-entry.md) · [部分采集参数](../../adr/0017-partial-collection-parameters.md)
+
+| 任务 | 前置 | 交付物与完成条件 |
+| --- | --- | --- |
+| CR8-T1 保存拆分前的全量采集对照（A4） | 无，须在改动采集实现前执行 | 用拆分前版本 `d4f33f2` 的 X5 普通入口，以临时 `PACE_ROOT`、Newton、2 个环境、`--visualizer none --duration 0.1`、默认参考分组采集一次。保留原始 `chirp_data.pt` 到 Verify，记录命令、种子、任务列序、控制周期、依赖和后端版本、样本数及文件摘要。基线与新输出放在独立目录，供 T5 使用。 |
+| CR8-T2 提取共用仿真逻辑（A2、A4、A5） | T1 | 将已批准的启动与关闭、扫频、参数与初态写入、步进前采样、原子保存及绘图例程从 `scripts/pace/data_collection.py` 提取到 `src/pace_sim2real/utils/trajectory_simulation.py`，由原入口调用。保留 Warp 导入顺序、环境关闭与落盘顺序，以及旧全量扫频及文件回放各自的初态。更新两份现有测试对已移动函数的导入，用确定性环境检查时间、状态、延迟前目标与异常停止；核对相同输入的期望轨迹逐列一致。 |
+| CR8-T3 迁移回放入口与所有调用（A1、A5，A4 的回放侧） | T2 | 新增 `scripts/pace/replay.py`，使用 `fit_replay` 的结果选择与物理兼容性校验；把结果分组、文件/生成轨迹选择、保持工况核对、误差和另存保护从采集入口迁出。更新 `tests/test_fit_replay.py` 与 CLI 解析用例。检查默认/裸标志/显式路径、最新运行缺结果、文件与扫频互斥、物理或关节不兼容、链接别名保护、可选保存与绘图。采集入口遇到三个回放选项及赋值形式时在仿真前失败，已有文件逐字节相同；两个入口均接受合法 Hydra 覆盖。将 `README.md` 和 `docs/usage.md` 的回放示例切到新入口。 |
+| CR8-T4 接入固定参数的部分采集（A2、A3，A4 的采集侧） | T2；建议在 T3 后接入同一采集入口 | 普通采集通过现有 `reference_groups` 取得记录列，通过完整任务分组映射动作。将同名全量扫频列用于所选关节，复用 `SubsetControl` 的保持目标及按驱动组写入逻辑，落实 Q3 的固定参数范围和 Q5 的初态；覆盖全选但重排列序，以及两种摩擦后端的现有写入语义。扩展 `tests/test_mixed_collection_fit.py` 和已有具名扫频用例，核对 X3mini 的 LF_WHEEL、ANYmal D 的纯位置子集与 X5 跨腿混合的动作、输出列序及缺失组字段。对单驱动组、多驱动组、非零默认偏置和初速度核查写入值、保持状态、5 步延迟作用范围；检查延迟超限和无效选择时的文件保护。补齐采集与列序配置示例。 |
+| CR8-T5 接通真实采集文件的拟合与回放回归（A1–A5） | T3、T4；A4 使用 T1 对照 | 在现有 X5 短程集成测试中覆盖新全量采集与旧基线对照、全量 v2 原文件回放，以及“实际采集子集 → 同一列序拟合 → 新入口用原文件回放 v3”。单独以生成扫频和独立测量文件运行新入口，核查选中名称、保持目标、有效组的 RMSE 与另存行为。保留已有的人工构造轨迹用于独立验证，另用实际子集采集文件证明新入口产出的数据可直接消费。逐条核对 README 和使用手册中的命令。 |
+
+**验证交接。** T2–T4 先运行 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 .venv/bin/python -m pytest -q -rs tests/test_mixed_collection_fit.py tests/test_fit_replay.py`。T5 按需分别开启 `PACE_RUN_REPLAY_INTEGRATION=1` 与 `PACE_RUN_SUBSET_INTEGRATION=1`，串行运行相应短程用例；每次启动前检查可用 RAM/VRAM，使用 2 个环境和无显示模式。正式 Verify 逐项保存命令、实际执行或跳过情况、文件列序和最大绝对差。全量对照在相同运行条件下比时间、期望与列序，并验证响应差上限为 0.0001 rad 和 0.001 rad/s；原轨迹复现按相同上限对照拟合保存的最佳响应。独立轨迹只核对 RMSE 的来源、计算和单位。[回放测试](../../tests/test_fit_replay.py) · [采集与分组测试](../../tests/test_mixed_collection_fit.py)
+
+**前提与待批事项。** 当前资料足以开展上述任务。数值对照依赖可运行的相同后端和可复用的拆分前输出；若运行环境受限，记录受影响的验收项并保留待验状态。实施已获批准。
+
+### CR8 Implement 交接
+
+用户批准 T1–T5 后完成实施。采集与回放入口见 [data_collection.py](../../scripts/pace/data_collection.py) 和 [replay.py](../../scripts/pace/replay.py)，共用执行路径见 [trajectory_simulation.py](../../src/pace_sim2real/utils/trajectory_simulation.py)。[SubsetControl](../../src/pace_sim2real/utils/subset_control.py) 允许普通采集采用实际驱动延迟模式，拟合与回放继续核对参考模式。两组参考配置的说明、[中文示例](../../README.md)、[使用手册](../../docs/usage.md)及两份测试已同步。
+
+**T1 基线。** 在源码 `d4f33f2` 改动前执行 `PACE_ROOT=/tmp/pace-cr8-arKTEC7B/before OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 MPLBACKEND=Agg .venv/bin/python scripts/pace/data_collection.py --task Isaac-Pace-Sevnce-X5-v0 --num_envs 2 --visualizer none --duration 0.1`，返回 0。Newton MJWarp，RTX A5000，Isaac Lab `ae6330248`（isaaclab 45.1.0、isaaclab-newton 17.1.0），Newton 1.9.0.dev0、Warp 1.17.0、PyTorch 2.11.0+cu130。两侧均使用入口的 PyTorch 种子 42，环境 seed 均为任务默认 None。控制周期 0.0025 s，共 40 个步进前样本。位置列依 FL、FR、RL、RR，每腿依 hip、thigh、calf，轮速列为同腿序的 foot。原始序列已保留为 [cr8-baseline.pt](cr8-baseline.pt)，SHA-256 `a5639a6971d32be2f4f4ff958769290a0f398479f635a17cec49f5dac4dcafb4`。
+
+**实施检查。** 以下为 Implement 的实测记录，正式 Verify 由下一阶段登记。所有 Isaac Lab 运行均为无显示、2 个环境、串行短程；启动前检查可用 RAM/VRAM。下列 pytest 命令共用环境 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 MPLBACKEND=Agg OMP_NUM_THREADS=2 MKL_NUM_THREADS=2`。
+
+| 覆盖 | 已运行的检查与结果 |
+| --- | --- |
+| A1、A5 | 两个入口分别执行 `--help` 成功；解析用例覆盖查找最新结果、带路径的结果、Hydra 覆盖以及旧采集入口对 3 个回放选项和赋值形式的拒绝。路径保护覆盖硬链接；README 与使用手册共 9 段相关 Bash 示例通过语法检查。 |
+| A2、A3 | 用 T1 的运行参数将任务换为 X3mini 或 ANYmal D，分别通过 Hydra 仅选择 `LF_WHEEL` 或 `RF_HAA`。均得到 40 帧且只含对应组，期望曲线与已知同类系数逐列一致。X5 把完整参考列序分别反转后，按名对齐的期望与响应通过全量容差检查。在 X3mini 单轮命令中加 `env.scene.robot.actuators.joints.max_delay=4`，5 步延迟被拒绝，原文件 SHA-256 完整。非零保持值、固定机械参数、单组与多组的写入范围由 CPU 工况覆盖。 |
+| A4 · 全量 | 同工况普通采集的 5 个张量与 T1 逐元素相同。`PACE_COLLECTION_BASELINE=.scratch/issue_4/cr8-baseline.pt PACE_RUN_REPLAY_INTEGRATION=1 .venv/bin/python -m pytest -q -s tests/test_fit_replay.py::test_x5_short_fit_replays_its_response_and_checks_an_independent_chirp` 显式通过。两组的拆分前后最大绝对差均为 0；原文件回放与 v2 最佳响应的最大绝对差也均为 0。 |
+| A4、A5 · 子集 | `PACE_RUN_SUBSET_INTEGRATION=1 .venv/bin/python -m pytest -q tests/test_fit_replay.py::test_x5_subset_fit_and_replay` 的 7 个参数化场景均已显式运行并通过。纯轮、纯位置和跨腿混合使用本次子集采集产生的文件进行拟合和 v3 回放。增加独立实测 RMSE 数值断言后以 `-q -s` 复跑 wheel、asymmetric 两例，均通过。纯轮原文件复现最大差 0，跨腿混合的位置与速度最大差分别为 1.1920929e−7 rad、1.49011612e−8 rad/s。独立工况下还检查了列序翻转、保持目标变化和报告的 RMSE。 |
+| 回归范围 | 全库默认运行 `.venv/bin/python -m pytest -q -rs --tb=short` 在增加最后一项后端摩擦契约测试之前得到 170 通过、8 个显式集成用例跳过、17 失败。17 项均在未改动的原生 MuJoCo 测试：1 项期望默认上限 10 Hz，仓库 TOML 实际为 4 Hz；16 项报告查看器关闭返回 −15。用 `git archive d4f33f2` 中的原生脚本、配置和测试，分别重跑 `test_load_default_config_without_isaaclab` 和 `test_save_roundtrip_replaces_old_file`，复现了这两种错误。 |
+| 后端边界 | Newton 已运行真实集成仿真。额外尝试 2 环境、0.03 s 的 `physics=isaacsim_physx` 单轮采集，Kit 在许可确认处退出；本轮未取得真实 PhysX 轨迹。 |
+
+本次独立轨迹的 v2 预测 RMSE 为 0.018491455 rad、1.6192978 rad/s。文件回放测试按实测张量重新计算并核对这两个值。Pyright 检查两个入口、共用仿真模块和子集控制，0 错误。运行日志位于 `/tmp/pace-cr8-arKTEC7B`。
+
+最终专项命令为 `.venv/bin/python -m pytest -q -rs tests/test_mixed_collection_fit.py tests/test_fit_replay.py`，沿用上文测试环境。72 通过（含 Newton/PhysX 固定摩擦参数分支），8 个按需集成用例默认跳过，上表已记录各自显式运行的结果。正式 Verify 待用户批准。

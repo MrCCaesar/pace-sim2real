@@ -348,3 +348,31 @@ Q7–Q9 已确认。未记录位置关节取物理初角等于编码器保持角
 **输出。** 每个存在的组输出五项，注明位置/速度与单位。极值统计给出有效关节数/总数；组 RMSE 使用全组，若无基准，标为组级 N/A。谱幅和时差分别报告有效组合数与入选频率的最小、最大值，同时列出请求的分析频带。某项无有效数据时报告 N/A 和原因；其他指标及滤波文件仍可产出。
 
 **图形。** 时间轴使用输入时间戳；时间图展示 C、R、F。频谱图呈现 R 的去均值单边幅值谱，横轴 Hz，覆盖 DC 至最高实际栅格。谱幅除以 sum(w)，双边配对的正频点乘 2，DC 和偶数长度的奈奎斯特点各保留一份。单位沿用所在组。各图按组和 1 起始列号对应文件中的关节；仅在绘图开启时调用交互显示。若请求绘图而图形显示失败，提示图形问题及已保存的文件路径。
+
+## CR8 采集与回放接口
+
+**Approved。** 批准依据为用户对 CR8 Q4、Q5 及配套接口的明确答复。以下为项目 CLI 与数据契约。固定参数作用范围已经用户批准。采用已安装 Isaac Lab 的 `setup_preset_cli`、`resolve_task_config`、`launch_simulation` 及现有环境接口；它们属于库 API。[安装版本与源码](research.md#入口拆分与迁移范围)
+
+| 接口 | 输入、默认与输出 |
+| --- | --- |
+| `scripts/pace/data_collection.py --task TASK` | 使用任务默认参数配置及可选 Hydra 覆盖，按 `reference_leg_order` 和 `reference_wheel_order` 采集。成功时原子写入 `data/<规范化任务名>/chirp_data.pt`，根目录沿用 `project_root()` 的解析规则。遇到旧回放选项 `--fit_result`、`--trajectory_file` 或 `--output`（含赋值形式）报参数错误并指向 `replay.py`。 |
+| `scripts/pace/replay.py --task TASK [--fit_result [PATH]]` | PATH 选指定配对结果；省略选项或仅给选项选当前工作目录 `logs/pace-sim2real/<规范化任务名>/` 下最新时间戳运行的 `best_result.pt`。仅接受有效的单一 dt 配对 v2/v3 结果，要求关节集合、后端、求解器、步长、偏置与延迟语义兼容。生成扫频时 v3 按结果名称、v2 按任务完整分组选择关节。 |
+| 回放的 `--trajectory_file PATH`、`--output PATH` | 两者均可省略。前者读取原文件或独立采集文件，以声明列序解释期望和实测，按结果的关节名重排参数；与任一显式扫频参数互斥。路径相对当前工作目录或为绝对路径。默认只计算响应；给出输出路径时原子保存。目的路径与拟合结果、输入轨迹、配置的拟合参考、任务默认采集文件或 X5 默认原生 MuJoCo 文件重合（含链接别名）时，在仿真前拒绝。 |
+| 两入口共用的生成扫频和显示参数 | `--min_frequency`、`--max_frequency` 单位 Hz，默认 0.1、10。频率满足 0 < min ≤ max < 0.5 / 控制步长（秒）。`--duration` 单位秒，默认 20，须为至少一个控制步的整数倍。`--plot` 默认关闭；开启时仅绘制实际选中关节，文件回放额外叠加实测。设备、可视化、视频、环境数量等运行参数沿用采集入口。 |
+
+**任务分组。** 两个参考字段的类型各为 `list[str] | None`，逐组独立解析。缺省或 `None` 取该组任务全序，`[]` 取空组，其余列表使用给定名称顺序。解析后的总数必须为正，重复、跨组和未知名报错。任务的 `leg_order/wheel_order` 决定完整动作分组。普通采集使用两个参考字段；生成扫频的回放从结果确定关节；文件回放的参考组需与结果的各组集合一致。允许组内列序改变。v3 工况的保持值变化按既有规则列出旧值与当前值，使用当前任务值。
+
+**接口用例。** X3mini 的单轮采集可使用以下命令。将同一对参考分组传给拟合和文件回放，便可将这份采集的唯一速度列解释为 `LF_WHEEL`。
+
+```bash
+task=Isaac-Pace-Sevnce-X3mini-v0
+groups=('env.sim2real.reference_leg_order=[]' 'env.sim2real.reference_wheel_order=["LF_WHEEL"]')
+uv run python scripts/pace/data_collection.py --task "$task" "${groups[@]}" --visualizer none --duration 1
+# 已有该轮的拟合结果时，以下两条分别复现采集文件、生成新扫频
+uv run python scripts/pace/replay.py --task "$task" "${groups[@]}" --trajectory_file "data/$task/chirp_data.pt" --visualizer none
+uv run python scripts/pace/replay.py --task "$task" --duration 1 --min_frequency 1 --max_frequency 4 --visualizer none
+```
+
+**数据与采样。** 写出的字典含环境 0 的步进前 `time[T]`（CPU float64，秒，从 0 开始），以及每个有效组的成对 CPU float32 张量。P 个位置关节产生 `dof_pos[T,P]`（物理角减偏置，rad）和 `des_dof_pos[T,P]`（编码器坐标目标，rad）；V 个速度关节产生 `dof_vel[T,V]` 和 `des_dof_vel[T,V]`（关节轴角速度，rad/s）。每个期望值都是该步发出的延迟前目标。省略空组的两个键。时间递增、张量有限；发生异常复位、终止、仿真关闭、时间跳变或任一环境含无效状态时，报错并保留已有文件。常规采集允许 T=1，拟合/文件回放要求 T≥2 且参考时间与拟合控制周期兼容，拟合及配对结果回放要求 decimation=1。
+
+**项目内部共用采样接口。** `collect_trajectory(env, leg_trajectory, wheel_trajectory, bias, *, control=None) -> dict[str, torch.Tensor]` 继续接收已初始化且已施加参数的环境、按选中顺序排列的位置目标 [T,P] 与可选速度目标 [T,V]，以及仿真设备上的位置偏置 [E,P]（E 为环境数）。纯速度使用 [T,0] 位置目标，纯位置允许速度目标为 None。存在保持关节或需要按名重排时，使用已有 `SubsetControl` 准备全机动作并按记录顺序提取测量。返回上述 CPU 字典；形状、有限性和运行状态异常按现有错误契约处理。参数的选择、初态和落盘由调用方负责。拟合参数、时间基准与评分契约见 CR4；仿真工况及测量验收见 [CR8 规格](spec.md#cr8-独立回放与部分关节采集specify--approved)。

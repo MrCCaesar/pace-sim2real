@@ -198,18 +198,28 @@ def test_x5_short_fit_replays_its_response_and_checks_an_independent_chirp(tmp_p
 
     run("data_collection.py", "--duration", ".1")
     training_file = tmp_path / "moving.pt"
-    training = {k: v[8:].clone() for k, v in read(data_path).items()}
+    full = read(data_path)
+    if baseline_path := os.environ.get("PACE_COLLECTION_BASELINE"):
+        baseline = read(baseline_path)
+        assert full.keys() == baseline.keys()
+        for field in ("time", "des_dof_pos", "des_dof_vel"):
+            torch.testing.assert_close(full[field], baseline[field], atol=0, rtol=0)
+        for field, tolerance in (("dof_pos", 0.0001), ("dof_vel", 0.001)):
+            difference = (full[field] - baseline[field]).abs().max().item()
+            print(f"Full collection {field} max absolute difference: {difference:.9g}")
+            assert difference <= tolerance
+    training = {k: v[8:].clone() for k, v in full.items()}
     assert training["dof_vel"][0].abs().max() > 0
     torch.save(training, training_file)
     torch.save(training, data_path)
     run("fit.py", "env.sim2real.cmaes.max_iteration=1")
     (best_file,) = (tmp_path / "logs" / "pace-sim2real" / task).glob("*/best_result.pt")
     before_sweep = data_path.read_bytes()
-    run("data_collection.py", "--fit_result", best_file, "--duration", ".025")
+    run("replay.py", "--duration", ".025")
     assert data_path.read_bytes() == before_sweep
     replay_file = tmp_path / "replay.pt"
     # File replay accepts a nonzero initial wheel velocity and aligns timestamps relative to its first sample.
-    run("data_collection.py", "--fit_result", best_file, "--trajectory_file", training_file, "--output", replay_file)
+    run("replay.py", "--fit_result", best_file, "--trajectory_file", training_file, "--output", replay_file)
     best, replay = read(best_file), read(replay_file)
     torch.testing.assert_close(replay["time"], best["time"])
     for field, tolerance in (("dof_pos", 0.0001), ("dof_vel", 0.001)):
@@ -224,7 +234,7 @@ def test_x5_short_fit_replays_its_response_and_checks_an_independent_chirp(tmp_p
     held_out = read(data_path)
     assert not torch.equal(held_out["des_dof_vel"], training["des_dof_vel"])
     stdout = run(
-        "data_collection.py",
+        "replay.py",
         "--fit_result",
         "physics=newton_mjwarp",
         "--trajectory_file",
@@ -247,7 +257,7 @@ def test_x5_short_fit_replays_its_response_and_checks_an_independent_chirp(tmp_p
     torch.save(held_out, outliers)
     offset_replay = tmp_path / "offset-response.pt"
     run(
-        "data_collection.py",
+        "replay.py",
         "--fit_result",
         best_file,
         "--trajectory_file",
@@ -277,7 +287,7 @@ def test_cli_protects_inputs_before_simulation(tmp_path):
     default.write_bytes(b"preserve this collection")
     args = [
         sys.executable,
-        str(ROOT / "scripts" / "pace" / "data_collection.py"),
+        str(ROOT / "scripts" / "pace" / "replay.py"),
         "--task",
         task,
         "--fit_result",
@@ -291,13 +301,59 @@ def test_cli_protects_inputs_before_simulation(tmp_path):
     args.append("env.sim2real.data_dir=training.pt")
     native = default.with_name("mujoco_chirp_data.pt")
     native.write_bytes(b"preserve the native MuJoCo collection")
-    for path in (result, trajectory, default, native, configured):
+    alias = tmp_path / "hardlinked-result.pt"
+    os.link(result, alias)
+    for path in (result, trajectory, default, native, configured, alias):
         before = path.read_bytes()
         completed = subprocess.run([*args, "--output", str(path)], env=env, capture_output=True, text=True, timeout=60)
         assert completed.returncode != 0 and "protected" in completed.stderr
         assert path.read_bytes() == before
     completed = subprocess.run([*args, "--duration", "20"], env=env, capture_output=True, text=True, timeout=60)
     assert completed.returncode == 2 and "--trajectory_file and --duration" in completed.stderr
+
+
+def test_collection_rejects_retired_flags_before_launch(tmp_path):
+    task = "Isaac-Pace-Sevnce-X5-v0"
+    saved = tmp_path / "data" / task / "chirp_data.pt"
+    saved.parent.mkdir(parents=True)
+    saved.write_bytes(b"previous successful collection")
+    program = """
+import sys
+import data_collection
+task = sys.argv[1]
+def unexpected_launch(*args):
+    raise AssertionError("Invalid arguments reached the simulator")
+data_collection.launch_simulation = unexpected_launch
+for flag in ("--fit_result", "--trajectory_file", "--output"):
+    for tokens in ([flag, "sample.pt"], [flag + "=sample.pt"]):
+        try:
+            data_collection.main(["--task", task, *tokens])
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError(flag)
+for legs, wheels in (("[]", "[]"), ('["unknown"]', "[]"), ('["FL_foot_joint"]', "[]"),
+                     ("[]", '["FL_foot_joint","FL_foot_joint"]')):
+    try:
+        data_collection.main(["--task", task, "env.sim2real.reference_leg_order=" + legs,
+                              "env.sim2real.reference_wheel_order=" + wheels])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError((legs, wheels))
+"""
+    env = dict(os.environ, PACE_ROOT=str(tmp_path))
+    result = subprocess.run(
+        [sys.executable, "-c", program, task],
+        cwd=ROOT / "scripts/pace",
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.count("use scripts/pace/replay.py") == 6
+    assert saved.read_bytes() == b"previous successful collection"
 
 
 @pytest.mark.integration
@@ -377,15 +433,26 @@ entry.main()
         assert result.returncode == 0, (result.stdout + result.stderr)[-5000:]
         return result.stdout
 
-    path = tmp_path / "input.pt"
-    t = torch.arange(12, dtype=torch.float64) * 0.0025
-    data = {"time": t}
-    for group, names, factor in (("pos", legs, 0.03), ("vel", wheels, 1.3)):
-        if names:
-            wave = torch.stack([factor * (i + 1 + torch.sin(t.float() * 20)) for i in range(len(names))], dim=1)
-            data["dof_" + group] = wave
-            data["des_dof_" + group] = wave + factor
-    torch.save(data, path)
+    if selection in ("asymmetric", "wheel", "position"):
+        run("data_collection", "--duration", ".03")
+        path = tmp_path / "data" / task / "chirp_data.pt"
+        data = torch.load(path, weights_only=True)
+        fields = {"time"}
+        for names, field in ((legs, "dof_pos"), (wheels, "dof_vel")):
+            if names:
+                fields.update((field, "des_" + field))
+                assert data[field].shape == (12, len(names))
+        assert data.keys() == fields
+    else:
+        path = tmp_path / "input.pt"
+        t = torch.arange(12, dtype=torch.float64) * 0.0025
+        data = {"time": t}
+        for group, names, factor in (("pos", legs, 0.03), ("vel", wheels, 1.3)):
+            if names:
+                wave = torch.stack([factor * (i + 1 + torch.sin(t.float() * 20)) for i in range(len(names))], dim=1)
+                data["dof_" + group] = wave
+                data["des_dof_" + group] = wave + factor
+        torch.save(data, path)
     run("fit", f"env.sim2real.data_dir={path}", "env.sim2real.cmaes.max_iteration=2", "env.sim2real.cmaes.epsilon=0")
     (result_path,) = tmp_path.glob("logs/pace-sim2real/*/*/best_result.pt")
     best = torch.load(result_path, weights_only=True)
@@ -405,11 +472,13 @@ entry.main()
     )
 
     output = tmp_path / "played.pt"
-    run("data_collection", "--fit_result", result_path, "--trajectory_file", path, "--output", output)
+    run("replay", "--fit_result", result_path, "--trajectory_file", path, "--output", output)
     response = torch.load(output, weights_only=True)
     assert response.keys() == data.keys()
     for group, names, atol in (("pos", legs, 0.0001), ("vel", wheels, 0.001)):
         if names:
+            difference = (response["dof_" + group] - best["sim_dof_" + group]).abs().max().item()
+            print(f"{selection} original-trajectory {group} max absolute difference: {difference:.9g}")
             torch.testing.assert_close(response["dof_" + group], best["sim_dof_" + group], atol=atol, rtol=0)
             torch.testing.assert_close(response["des_dof_" + group], data["des_dof_" + group])
     process = subprocess.run(
@@ -422,16 +491,21 @@ entry.main()
     )
     assert process.returncode == 0, process.stderr
     if selection in ("wheel", "asymmetric"):
-        run("data_collection", "--fit_result", result_path, "--duration", ".03", "--output", output, pos=[], vel=[])
+        run("replay", "--fit_result", result_path, "--duration", ".03", "--output", output, pos=[], vel=[])
         sweep = torch.load(output, weights_only=True)
         assert sweep.keys() == data.keys()
         torch.testing.assert_close(sweep["des_dof_vel"][0], torch.zeros(len(wheels)))
+        run("data_collection", "--duration", ".03", "--min_frequency", "4", "--max_frequency", "8", change_hold=True)
+        independent = tmp_path / "data" / task / "chirp_data.pt"
+        data = torch.load(independent, weights_only=True)
+        assert not torch.equal(data["des_dof_vel"], sweep["des_dof_vel"])
+        path = tmp_path / "independent.pt"
         for k in ("dof_pos", "des_dof_pos"):
             if k in data:
                 data[k] = data[k].flip(1)
         torch.save(data, path)
         stdout = run(
-            "data_collection",
+            "replay",
             "--fit_result",
             result_path,
             "--trajectory_file",
@@ -442,25 +516,36 @@ entry.main()
             change_hold=True,
         )
         assert "hold_velocities" in stdout and "rad/s" in stdout
-        assert "Velocity prediction RMSE" in stdout
+        prediction = torch.load(output, weights_only=True)
+        for field, label in (("dof_vel", "Velocity"), ("dof_pos", "Position")):
+            if field in prediction:
+                rmse = (prediction[field].double() - data[field].double()).square().mean().sqrt().item()
+                assert f"{label} prediction RMSE: {rmse:.8g}" in stdout
 
 
 def test_named_subset_chirp_uses_the_full_task_coefficients():
     program = """
 from types import SimpleNamespace
 import torch
-from data_collection import _named_chirp
+from pace_sim2real.utils.trajectory_simulation import named_chirp
 args = SimpleNamespace(duration=.1, min_frequency=1., max_frequency=2.)
-pos, vel = _named_chirp(args, .01, "cpu", ["RR_hip_joint","FL_calf_joint"], ["FR_foot_joint"])
+pos, vel = named_chirp(args, .01, "cpu", ["RR_hip_joint","FL_calf_joint"], ["FR_foot_joint"])
 t = torch.arange(10, dtype=torch.float64) * .01
 signal = (2 * torch.pi * (t + 5 * t.square())).sin().float()
 torch.testing.assert_close(pos[:, 0], -.25 * signal)
 torch.testing.assert_close(pos[:, 1], .99 * (signal - 1.4))
 torch.testing.assert_close(vel[:, 0], 10 * signal)
+for joint in ("LF_WHEEL", "RH_WHEEL"):
+    pos, vel = named_chirp(args, .01, "cpu", [], [joint])
+    assert pos.shape == (10, 0)
+    torch.testing.assert_close(vel[:, 0], 10 * signal)
+pos, vel = named_chirp(args, .01, "cpu", ["RF_HAA"], [])
+assert vel is None
+torch.testing.assert_close(pos[:, 0], -.25 * signal)
 try:
-    _named_chirp(args, .01, "cpu", ["custom_joint"], [])
+    named_chirp(args, .01, "cpu", ["custom_joint"], [])
 except ValueError as error:
-    assert "--trajectory_file" in str(error)
+    assert "custom_joint" in str(error)
 else:
     raise AssertionError("Expected an explicit file requirement for an unknown joint")
 """

@@ -30,7 +30,7 @@ class SubsetControl:
             return None
         return cls(env, legs, wheels)
 
-    def __init__(self, env, legs, wheels):
+    def __init__(self, env, legs, wheels, *, check_delay_mode=True):
         self.robot = robot = env.scene["robot"]
         self.legs, self.wheels = tuple(legs), tuple(wheels)
         self.task_legs, self.task_wheels = resolve_joint_groups(env.cfg.sim2real)
@@ -66,7 +66,7 @@ class SubsetControl:
             covered.extend(names)
             members = [n for n in names if n in selected]
             if members:
-                if drive.cfg.delay_mode != env.cfg.sim2real.reference_delay_mode:
+                if check_delay_mode and drive.cfg.delay_mode != env.cfg.sim2real.reference_delay_mode:
                     raise ValueError(f"Incompatible delay mode on {key}")
                 self.delay_groups[key] = names
                 self.drives.append(

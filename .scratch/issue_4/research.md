@@ -409,3 +409,43 @@ MPLCONFIGDIR="$p/mpl-edges" .venv/bin/python "$p/trial.py" edges > "$p/edges.txt
 | 50 Hz 采样；60 Hz 采样且记录长度为偶数 | 前者没有 ≥30 Hz 频点。后者仅有 30 Hz 奈奎斯特点，幅值减半对应 6.0206 dB 能量降幅，相位时差无值；滤后能量严格为零、原始能量显著时可区别报告正无穷。 |
 
 **实验假设与未决项。** 为识别双精度舍入残差，临时脚本使用逐列的数值底限（谱幅参考为 `64 × ε64 × Hann窗系数和 × 该列原信号最大绝对值`），时差还要求滤后谱幅超过对应滤前谱幅的 `1e−8`；高频谱范数与按实际频点数折算的底限比较。判据仅用于探索可报告性，无法据此推断传感器的物理信噪比。Specify 仍需确认分析频带的声明方式、有效覆盖与无值的显示、弱信号门槛及精确零能量的处理。两项实验未修改生产脚本或回归测试。
+
+## CR8 独立回放与部分关节采集
+
+**Research · Draft。** 用户已确认普通采集仅激励选中关节，其余关节沿用部分拟合的保持目标。本节据仓库源码与现有测试分析可行性，本轮未运行测试或仿真。[CR8 需求](requirements.md#cr8-独立回放入口与部分关节采集explore--draft)
+
+### 采集与回放的数值条件
+
+| 已确认事实 | 对迁移与部分采集的影响 |
+| --- | --- |
+| `reference_groups` 分别解析两个记录组，保留列序，拒绝两组均空、重复、未知或跨组名称。动作管理器仍要求覆盖任务全部受控关节。 | 可用完整任务名称构造动作映射，将选中轨迹填到对应列，其他列填保持值；测量再按声明顺序从 articulation 取列。仅轮速时内部位置命令可以是 `[T,0]`，输出只需时间与期望、实测轮速。[分组与动作映射](../../src/pace_sim2real/utils/collection_contracts.py) · [保持指令展开](../../src/pace_sim2real/utils/subset_control.py) |
+| 旧全量采集先生成全宽轨迹。部分回放的 `_named_chirp` 用固定名称表选列，只识别 X5 和纯腿 ANYmal。已注册的 X3mini 有 12 个同 ANYmal 命名的腿关节与 4 个 `*_WHEEL`，其原全量宽度适用现有数组；选择任一该型轮会被现有名称表拒绝。 | 可按受支持任务既有完整系数顺序生成，再按关节名投影。比如 X5 的 `RR_hip_joint` 应取负方向髋系数，放在文件第 1 列也不改变此系数。对缺少已知系数的关节不推测幅度或方向。收集入口只支持扫频，其报错不能建议已迁出的文件轨迹参数。[生成与投影](../../scripts/pace/data_collection.py) · [任务注册](../../src/pace_sim2real/tasks/manager_based/__init__.py) · [X5/X3mini 分组](../../src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py) |
+| 旧普通采集给全部关节写入转子惯量 0.1、黏性摩擦 4.5、静摩擦 0.05、动摩擦 0.025，腿偏置 0.05 rad、轮偏置 0，组延迟 5 个物理步。Newton 用单一干摩擦，旧路径在两种摩擦值不同时警告；PhysX 写入两种系数。PACE 驱动刚建立时将延迟设为各自的 `max_delay`。 | 部分拟合只覆盖选中关节的机械参数与偏置，对含选中关节的整组写延迟；独立的未参与组保留任务延迟。同一 X5 单驱动组选一轮时，组内 16 个关节均受该组延迟影响。全量施加采集常数后再截取动作或输出，会改变未选中关节的反馈和耦合响应。[采集常数](../../src/pace_sim2real/utils/fit_replay.py) · [后端写入](../../scripts/pace/data_collection.py) · [执行器初值](../../src/pace_sim2real/utils/pace_actuator.py) · [整组延迟契约](../../adr/0012-participating-actuator-delay.md) |
+| 现有部分控制在参数写入前读取任务默认状态与驱动偏置。保持腿每步跟踪“默认物理角减默认偏置”，首帧取默认物理角、零速；保持轮取默认角与默认速度。环境 reset 后还会清除改写延迟的驱动组历史。 | 选中腿生成扫频时以首个期望位置加偏置起步；文件回放使用首帧实测位置加偏置及首帧实测轮速。还须区分旧全量生成扫频将所有初速置零，而现有部分路径保留选中腿的任务默认初速。若配置了非零初速，合并初始化会改变首帧以后的响应；采集若直接调用部分控制，也会新增参与组 `reference_delay_mode` 一致性检查。[普通与文件初始化](../../scripts/pace/data_collection.py) · [部分控制与延迟缓冲](../../src/pace_sim2real/utils/subset_control.py) · [保持工况](../../adr/0011-held-joint-initial-state.md) |
+| `collect_trajectory` 在每次 step **前**读仿真时钟和状态，落盘环境 0 的位置 `q−b`、原始轮速以及延迟前的期望值。它检查所有环境、所有关节及最后一步之后的状态，遇到终止、截断或时间异常会中断。 | 普通采集和回放可直接共用此循环；选列应只影响导出的关节，保留完整状态检查和现有原子保存。拟合加载器要求至少两帧，采集器当前允许一帧；后续端到端验证需使用至少两帧。[循环与保存](../../scripts/pace/data_collection.py) · [参考文件加载](../../src/pace_sim2real/utils/collection_contracts.py) |
+
+**待确认的物理范围。** Q1 已确定保持指令，尚未明确部分采集给哪些关节写入上述采集常数。建议选中关节沿用采集常数，其余沿用任务机械参数及默认偏置，按参与的驱动组写入五步延迟。这与现有部分拟合的参数作用范围一致；另一种可行方式是沿用全机采集常数，同时按原任务基线构造保持动作。两者会改变未选中关节的实际状态和载荷，需在 Specify 中确定。[CR8 Q1](requirements.md#cr8-独立回放入口与部分关节采集explore--draft) · [部分控制写入](../../src/pace_sim2real/utils/subset_control.py)
+
+**已有覆盖与验证建议。** 现有测试覆盖乱序 X5 扫频系数、两个驱动组的非零偏置与保持速度、文件回放和独立扫频。部分关节 CLI 集成用手工构造的参考张量开始拟合，尚未检验普通采集入口生成的子集文件。建议核对纯位置、纯速度及乱序混合采集的字段、全机动作、首帧和同配置加载，再对比全量默认采集迁移前后的时间、命令和测量。X3mini 轮系数可先做纯张量检验，避免把任务注册与真实仿真通过混为一谈。[回放测试](../../tests/test_fit_replay.py) · [映射、保持与采集测试](../../tests/test_mixed_collection_fit.py)
+
+### 入口拆分与迁移范围
+
+**Q3 交接更新。** 用户在研究完成后确认采用上文建议的参数作用范围，并批准进入 Specify。[已确认的作用范围](../../adr/0017-partial-collection-parameters.md)
+
+研究基线为项目 `d4f33f2` 和本地 editable Isaac Lab `ae6330248`。虚拟环境发行包为 `isaaclab 45.1.0`、`isaaclab_tasks 30.1.3`、`isaaclab_rl 5.3.1`。下列生命周期与命令行结论取自项目锁定路径所指的本地源码。[项目依赖来源](../../pyproject.toml#L87)
+
+| 操作 | 决定关节及轨迹的来源 | 需要保留的文件行为 |
+| --- | --- | --- |
+| 固定参数采集 | CR8 使用配置中的两个参考分组，按所选名称取得扫频目标 | 成功时原子替换任务的 `chirp_data.pt` |
+| 用拟合结果生成扫频 | v3 使用结果中已辨识的名称，v2 使用任务完整分组。此路径不依赖参考文件列序 | 默认仅运行，显式另存才写入 |
+| 用原文件或独立文件回放 | 文件按当前配置解释列序，与拟合结果按名称集合匹配，从首帧实测初始化 | 对有记录的组计算预测 RMSE；另存保护拟合结果、轨迹文件、默认与配置的采集数据，以及 X5 的原生 MuJoCo 文件 |
+
+依据为[结果与分组选择](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L97)、[配对结果按名校验](../../src/pace_sim2real/utils/fit_replay.py#L117)、[写出及误差](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L177)和[原子保存](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L398)。完整任务控制分组、采集选择和回放结果分组应分别保留；若在公用启动流程中一律调用 `reference_groups`，会误拒原本允许参考配置为空的 v3 生成扫频。[已有回归场景](../../tests/test_fit_replay.py#L425)
+
+**可行路径与代价。** 方案一由两个入口各自处理参数来源、文件检查和输出行为，复用仿真生命周期、扫频、物理写入与采样例程。模式分支较少，可分别验证两个入口。方案二保留一个带模式分支的完整运行器，在两个薄入口中选择模式。移动较少，但新采集的分组及默认写入仍与回放的保护分支耦合。建议方案一，同时保留尚未证明等价的初态路径。模块放置与签名留待 Specify。[架构提议](../../adr/0016-separate-replay-entry.md)
+
+**启动顺序与废弃选项。** 项目先设置 Warp 的 `enable_backward`，再导入定义内核的模块。任务配置和路径保护在仿真前完成，后端相关的结果兼容检查在 launcher 解析后端之后执行。采样完成后先关闭环境，再在 launcher 上下文内落盘，以适配 Kit 的关闭行为。本机 `setup_preset_cli` 使用 `parse_known_args`，未知选项会随 Hydra 剩余项向下传递。旧入口验收应覆盖旧回放命令在仿真前失败、已有采集文件完整，同时合法的 `env.sim2real.*` 覆盖仍可用。[现有顺序](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L5) · [项目 CLI](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L525) · [本机参数解析](../../../IsaacLab/source/isaaclab_tasks/isaaclab_tasks/utils/hydra.py#L734) · [本机启动上下文](../../../IsaacLab/source/isaaclab/isaaclab/app/sim_launcher.py#L411)
+
+**迁移清单。** README 和使用手册含旧回放命令；纯采集示例保留原入口。回放测试同时包含采集命令、回放命令、对旧脚本的函数导入，以及测试工况用的任务解析替换；需按用途迁移。混合采集测试通过文件路径加载采样函数，其启动参数用例目前仅覆盖采集和拟合。离线绘图使用已保存结果，可继续维持独立入口。历史阶段文档保留其当时的命令。[README](../../README.md#L36) · [使用手册](../../docs/usage.md#L154) · [回放及路径保护](../../tests/test_fit_replay.py#L199) · [部分关节启动测试](../../tests/test_fit_replay.py#L322) · [按名扫频测试](../../tests/test_fit_replay.py#L448) · [采样与 CLI 测试](../../tests/test_mixed_collection_fit.py#L674) · [离线入口](../../scripts/pace/plot_trajectory.py#L263)
+
+**验收边界。** “同配置可直接拟合”要满足现有加载契约。采集允许一个控制步，拟合加载器至少要求两个样本，且拟合入口要求 `decimation=1`。建议用满足这些条件的子集文件验证采集 → 拟合 → 两种回放；另以普通全量采集作为数值基线。Research 只做源码、配置、既有测试与安装源的静态核对，本轮没有运行实验、测试或仿真。[采集时长](https://github.com/MrCCaesar/pace-sim2real/blob/d4f33f25558f4566ae64f0a08401bbd605db4f4c/scripts/pace/data_collection.py#L358) · [参考时间校验](../../src/pace_sim2real/utils/collection_contracts.py#L199) · [拟合前置条件](../../scripts/pace/fit.py#L67)

@@ -182,7 +182,7 @@ class PaceCfg:
     """Overall configuration for Pace Sim2Real task."""
 
     cmaes: CMAESOptimizerCfg = CMAESOptimizerCfg()
-    # Each reference group independently declares file columns: None = full group, [] = absent.
+    # File and collection columns, independently per group: None = task order, [] = absent.
     reference_leg_order: list[str] | None = None
     reference_wheel_order: list[str] | None = None
     reference_bias_model: str = "feedback_and_measurement"

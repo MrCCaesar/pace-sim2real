@@ -15,6 +15,7 @@ The typical workflow consists of:
 | Script               | Purpose                                                                 |
 | -------------------- | ----------------------------------------------------------------------- |
 | `data_collection.py` | Collects excitation data using a chirp signal for system identification |
+| `replay.py` | Runs a fitted candidate against a generated chirp or a measured trajectory |
 | `fit.py`             | Runs the PACE parameter identification using CMA-ES                     |
 | `plot_trajectory.py` | Visualises the resulting trajectories and optimization progress         |
 
@@ -157,16 +158,16 @@ Run these commands from the same working directory used for fitting. Set the tas
 ```bash
 task=Isaac-Pace-Sevnce-X5-v0
 uv run python scripts/pace/data_collection.py --task "$task"                         # fixed-parameter collection
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result --plot     # latest fit, generated chirp
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result runs/x5/best_result.pt --duration 5 --max_frequency 4 --plot
+uv run python scripts/pace/replay.py --task "$task" --plot                                          # latest fit, generated chirp
+uv run python scripts/pace/replay.py --task "$task" --fit_result runs/x5/best_result.pt --duration 5 --max_frequency 4 --plot
 ```
 
-The bare `--fit_result` selects the newest timestamped fitting run under `logs/pace-sim2real/<task>/`. If that run has no `best_result.pt`, the error identifies the run. An explicit result path selects that candidate directly. Replay requires a paired v2 or v3 result with a single `settings.dt`, compatible physics, and matching leg and wheel names. Within each group the fitted parameters are reordered by name.
+Omitting `--fit_result` or passing it without a path selects the newest timestamped fitting run under `logs/pace-sim2real/<task>/`. If that run has no `best_result.pt`, the error identifies the run. An explicit result path selects that candidate directly. Replay requires a paired v2 or v3 result with a single `settings.dt`, compatible physics, and matching leg and wheel names. Within each group the fitted parameters are reordered by name.
 
 Use a separately collected trajectory to evaluate prediction on different commands:
 
 ```bash
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result \
+uv run python scripts/pace/replay.py --task "$task" --fit_result \
     --trajectory_file validation/x5_chirp.pt --output validation/x5_replay.pt --plot
 ```
 
@@ -174,16 +175,17 @@ The trajectory uses its declared reference leg and wheel column order and sampli
 
 Replay writes a three- or five-tensor response only when you give `--output`. To check reproduction, use the original fit trajectory and compare the output with the winning candidate's saved simulation response. The short reproduction test uses maximum absolute differences of 0.0001 rad and 0.001 rad/s. Playback, plotting, and saving remain available at any finite tracking error.
 
-### Fitting and replaying selected joints
+### Collecting, fitting and replaying selected joints
 
 Keep the complete robot in `leg_order` and `wheel_order`. Bounds and list-valued scales follow full task order. The fitter selects them by name. A speed-only file contains `time`, `dof_vel` and `des_dof_vel`. For a single front-left wheel, use these commands.
 
 ```bash
 task=Isaac-Pace-Sevnce-X5-v0
 groups=('env.sim2real.reference_leg_order=[]' 'env.sim2real.reference_wheel_order=["FL_foot_joint"]')
-uv run python scripts/pace/fit.py --task "$task" "${groups[@]}" env.sim2real.data_dir=wheel.pt
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result --trajectory_file "data/$task/wheel.pt" "${groups[@]}"
-uv run python scripts/pace/data_collection.py --task "$task" --fit_result --duration 1 --plot
+uv run python scripts/pace/data_collection.py --task "$task" "${groups[@]}" --visualizer none
+uv run python scripts/pace/fit.py --task "$task" "${groups[@]}"
+uv run python scripts/pace/replay.py --task "$task" --fit_result --trajectory_file "data/$task/chirp_data.pt" "${groups[@]}"
+uv run python scripts/pace/replay.py --task "$task" --fit_result --duration 1 --plot
 uv run python scripts/pace/plot_trajectory.py --task "$task" --plot_trajectory
 ```
 
