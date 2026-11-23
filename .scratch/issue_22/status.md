@@ -20,3 +20,4 @@
 - 用户批准回到 Implement，修复嵌套绑定并加入真实 X5 回归，修正 PACE 路径为 tasks/manager_based/pace/，并授权复核 A1–A8。
 - 用户核对版本差异后确认「按照v3.0.0正式版落地，PACE也是相同的要求，所有项目均使用v3.0.0正式版」。替代前一条的 manager_based 目录要求，PACE 家族统一为 tasks/pace/config/<robot>/。
 - Implement 修订和获授权的 Verify 复核完成。A1–A8 全部通过，正式版源码与现有开发环境各 238 通过、9 跳过。两项 X5 反例均报预期错误并退出 1。见[正式复验](verification.md)及[独立用例输出](reverification-cases.json)。
+- 交付整理完成。存量 lint 清理见 `6ae664f`，实现及验收记录见 `6669745cb8e8c8c1c03c55607166a5bd66e46b9a`。开发文档示例已固定到该实现 SHA，独立消费项目从本地 Git 读取该修订，合法奖励通过，缺失奖励返回 ORG005 并退出 1。

@@ -11,12 +11,12 @@ uv run pre-commit run --all-files
 
 任务位于 `src/<项目包>/tasks/<任务>/`，PACE、Direct 单智能体和 Direct 多智能体的家族目录分别形如 `pace/`、`walk_direct/` 和 `walk_marl_direct/`，机器人变体在 `config/<robot>/`，自定义 MDP 按实际类别组织到 `mdp/`。可复用的框架扩展位于 `src/<项目包>_isaaclabs/` 下相应职责目录。检查器接受 `--root PATH` 和 `--package NAME`；默认从当前目录的 pyproject.toml 读取项目名。
 
-跨项目接入可在消费项目的 .pre-commit-config.yaml 中配置下列 hook。将 rev 替换为**实际包含该 hook 的提交 SHA**，在 PATH 中提供 Python 3.12。hook 从提供方修订读取检查器，从消费项目工作树读取待检查文件，无需安装 PACE 或 Isaac Lab。
+在消费项目的 `.pre-commit-config.yaml` 中加入以下配置，并确保 PATH 中的 `python3` 为 Python 3.12。示例的 `rev` 固定到 Issue #22 的实现提交。pre-commit 从该修订加载检查器，在消费项目的工作树中检查源码，无需安装 PACE 或 Isaac Lab。
 
 ```yaml
 repos:
   - repo: https://github.com/MrCCaesar/pace-sim2real
-    rev: <包含检查器的提交 SHA>
+    rev: 6669745cb8e8c8c1c03c55607166a5bd66e46b9a
     hooks:
       - id: isaaclab-task-lint
 ```
