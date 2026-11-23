@@ -26,7 +26,7 @@ try:
     import isaacsim  # noqa: F401
 
     isaacsim_dir = os.environ.get("ISAAC_PATH", "")
-except ModuleNotFoundError or ImportError:
+except ImportError as exc:
     # Create a parser to get the isaac-sim path
     parser = argparse.ArgumentParser(description="Setup the VSCode settings for the project.")
     parser.add_argument("--isaac_path", type=str, help="The absolute path to the Isaac Sim installation.")
@@ -35,11 +35,11 @@ except ModuleNotFoundError or ImportError:
     # parse the isaac-sim directory
     isaacsim_dir = args.isaac_path
     # check if the isaac-sim directory is provided
-    if not os.path.exists(isaacsim_dir):
+    if not isaacsim_dir or not os.path.exists(isaacsim_dir):
         raise FileNotFoundError(
             f"Could not find the isaac-sim directory: {isaacsim_dir}. Please provide the correct path to the Isaac Sim"
             " installation."
-        )
+        ) from exc
 except EOFError:
     print("Unable to trigger EULA acceptance. This is likely due to the script being run in a non-interactive shell.")
     print("Please run the script in an interactive shell to accept the EULA.")

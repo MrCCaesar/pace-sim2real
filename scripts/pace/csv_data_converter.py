@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE.
 """Convert synchronized, named motor CSV frames to a PACE reference on CPU."""
 
 import argparse

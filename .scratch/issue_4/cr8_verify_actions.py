@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE.
 """Observe CR8 commands and articulation state at the normal Newton CLI's step boundary.
 
 Run in an isolated PACE_ROOT, using the same directory as cwd. Run x5 without an extra argument.
