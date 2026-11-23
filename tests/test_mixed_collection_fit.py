@@ -367,15 +367,13 @@ def run_backend_contract(backend, optimization, output, decimation=1):
                     torch.testing.assert_close(efforts[:, lp], expected_p)
                     torch.testing.assert_close(efforts[:, wv], expected_v)
                 (output / "result.json").write_text(
-                    json.dumps(
-                        {
-                            "backend": backend,
-                            "decimation": decimation,
-                            "physics_steps": 40,
-                            "compute_calls": len(compute_records),
-                            "delay_steps": 2,
-                        }
-                    )
+                    json.dumps({
+                        "backend": backend,
+                        "decimation": decimation,
+                        "physics_steps": 40,
+                        "compute_calls": len(compute_records),
+                        "delay_steps": 2,
+                    })
                     + "\n"
                 )
                 print("CR2_DECIMATION_PASS", backend, flush=True)
@@ -639,7 +637,7 @@ def test_newton_config_warns_and_removes_ratio_variables():
 import warnings
 from types import SimpleNamespace
 import torch
-from pace_sim2real.tasks.manager_based.pace.pace_sim2real_env_cfg import PaceCfg, PaceSim2realEnvCfg, NewtonCfg
+from pace_sim2real.tasks.pace.pace_sim2real_env_cfg import PaceCfg, PaceSim2realEnvCfg, NewtonCfg
 for legs, wheels in [(12, 0), (12, 4)]:
     count = legs + wheels
     size = 3 * count + legs + 1

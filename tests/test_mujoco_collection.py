@@ -3,6 +3,7 @@
 """Behavior tests for the standalone native MuJoCo collector."""
 
 import importlib
+import subprocess
 import sys
 import tomllib
 from dataclasses import replace
@@ -40,13 +41,26 @@ def config_file(tmp_path, **values):
 def test_load_default_config_without_isaaclab():
     cfg = load_config(ROOT / "config" / "x5_collection.toml")
     assert cfg.duration == 20.0
-    assert (cfg.min_frequency, cfg.max_frequency, cfg.seed) == (0.1, 10.0, 42)
+    assert (cfg.min_frequency, cfg.max_frequency, cfg.seed) == (0.1, 4.0, 42)
     assert cfg.plot == tomllib.loads((ROOT / "config/x5_collection.toml").read_text())["run"]["plot"]
     assert cfg.position_joints[:3] == ("FL_hip_joint", "FL_thigh_joint", "FL_calf_joint")
     assert cfg.velocity_joints[-1] == "RR_foot_joint"
     np.testing.assert_array_equal(cfg.position_centers[:3], [0, 0.4, -1.4])
     assert cfg.model_path.name == "x5_calibration.xml"
-    assert "isaaclab" not in sys.modules
+    # Other tests legitimately import Isaac Lab. Check the standalone import in a fresh interpreter.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; from pathlib import Path; from mujoco_collection import load_config; "
+                "load_config(Path(sys.argv[1])); assert 'isaaclab' not in sys.modules"
+            ),
+            str(ROOT / "config/x5_collection.toml"),
+        ],
+        cwd=ROOT / "scripts/pace",
+        check=True,
+    )
 
 
 @pytest.fixture
@@ -78,6 +92,7 @@ def native_config(tmp_path):
     return replace(
         cfg,
         model_path=path,
+        visualize=False,
         min_frequency=1.0,
         max_frequency=1.0,
         duration=0.02,

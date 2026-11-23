@@ -1,7 +1,10 @@
+# See LICENSE and NOTICE.
 """Task configuration and fixed-period selection for offline PACE recordings."""
 
 import math
+import sys
 from collections.abc import Sequence
+from contextlib import redirect_stdout
 from typing import Any, cast
 
 import torch
@@ -15,8 +18,10 @@ def load_recording_task(task: str) -> Any:
 
     from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry
 
-    load_external_tasks()
-    cfg = cast(Any, load_cfg_from_registry(task, "env_cfg_entry_point"))
+    # v3.0.0 prints discovery information; stdout belongs to the offline CLI report.
+    with redirect_stdout(sys.stderr):
+        load_external_tasks()
+        cfg = cast(Any, load_cfg_from_registry(task, "env_cfg_entry_point"))
     if not (hasattr(cfg, "sim2real") and hasattr(cfg, "sim") and hasattr(cfg, "decimation")):
         raise ValueError(f"{task} does not provide a PACE environment configuration")
     return cfg

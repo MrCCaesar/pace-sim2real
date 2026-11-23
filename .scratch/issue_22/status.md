@@ -1,0 +1,22 @@
+# Issue #22 阶段状态
+
+- Explore 进行中；用户于 2026-11-23 明确要求进入本阶段。
+- 已读取 Issue 正文与评论，核对仓库文件构成及已有 lint 配置，形成 requirements.md 草案。
+- 用户确认首版领域范围和全库存量代码验收边界；指定从 .scratch 文档提取历史案例。
+- 已将初始状态覆盖、动作列错序、时步混用的证据及建议优先级写入 requirements.md。该提议已被下一条用户反馈取代。
+- 本次查阅历史文档并更新 Explore 记录，未运行 lint、测试或仿真。
+- 用户明确排除上述三个场景；已撤回候选清单。Explore 继续，待确认目标约束的类型。
+- 用户已明确目标约束为自定义地形、Manager 和 MDP 项的官方文件组织与代码职责划分，见 R5–R6。待确认示例包名与按需设立 MDP 模块的边界。Explore 进行中。
+- 用户确认扩展包名必须为 <项目名>_isaaclabs，任务包按 isaaclab_tasks 组织，任务 MDP 模块按需设立。已记入 R7–R9；Explore 草案待整体批准，Research 尚待授权。
+- 2026-11-23 用户明确“批准并进入research”。Explore 已批准，当前阶段为 Research。
+- Research 草案与技术提案 ADR 0020 已提交用户审阅。记录了 3.0.0 固定提交、两种官方目录参考、MDP 静态归属、仓库迁移影响和 lint 方案取舍。待确认任务根目录映射、技术方向与 Specify 授权。仅做源码及文档核查，未运行实验、lint、测试或仿真。
+- Research 反馈：R8 修订为外部模板 tasks/<任务>/config/，R10 记录跨项目 pre-commit 复用；ADR 0020 的工具分工已获明确批准。用户随后澄清建仓审批边界：由 agent 评估必要性并在需要时提出建仓申请，由用户审批；当前无建仓申请或授权。待明确授权进入 Specify。
+- 收到用户“继续”，承接前次进入 Specify 的请求，已整理 spec.md 和 interfaces.md 草案。当前阶段为 Specify，待确认 ORG005 的处理及整体规格；尚未进入 Plan。
+- 用户确认未解析即失败并报告绑定位置和原因，同时澄清所有自定义环境内容均在范围内。已同步 requirements、research、spec 和 interfaces；Specify 修订稿待批，未进入 Plan。
+- 用户批准修订后的 Specify（含 ORG008）并授权 Plan。spec.md、interfaces.md 已标 Approved。当前阶段 Plan；plan.md 已列 T1–T7、依赖、A1–A8 验收和 Verify 顺序，等待用户批准计划并授权 Implement。本轮仅编制计划。
+- 用户批准 T1–T7，当前 Implement。迁移前静态运行发现 4 个注册入口、24 条 Ruff 诊断。回归基线为 215 通过、9 跳过、1 个既有失败（X5 配置上限 4 Hz，测试期望 10 Hz）。
+- Implement：T1–T7 工作树实施和自检完成。已记录配置基线，完成检查器、19 个静态/消费项目回归用例、任务与执行器迁移、hook 和文档。Ruff 与适用的全库 hooks 通过，结构计数 4 注册/5 环境与配置定义/36 组件，违规、未解析、缺规则均为 0；全套回归 235 通过、9 跳过。wheel 安装和四个配置及注册的 agent 均已加载。详见 [实施自检](implementation.md)。当前待用户批准进入正式 Verify。
+- 2026-11-23 用户批准进入 Verify。已完成 A1–A8 正式复核：[首轮验收报告](verification-initial.md)。A1–A6 通过，A7、A8 因 X5 资产配置替换中的嵌套执行器绑定漏检而失败；两个反例均错误退出 0。当前阶段为 Verify，整体验收未通过，待授权回到 Implement 修复。
+- 用户批准回到 Implement，修复嵌套绑定并加入真实 X5 回归，修正 PACE 路径为 tasks/manager_based/pace/，并授权复核 A1–A8。
+- 用户核对版本差异后确认「按照v3.0.0正式版落地，PACE也是相同的要求，所有项目均使用v3.0.0正式版」。替代前一条的 manager_based 目录要求，PACE 家族统一为 tasks/pace/config/<robot>/。
+- Implement 修订和获授权的 Verify 复核完成。A1–A8 全部通过，正式版源码与现有开发环境各 238 通过、9 跳过。两项 X5 反例均报预期错误并退出 1。见[正式复验](verification.md)及[独立用例输出](reverification-cases.json)。

@@ -12,11 +12,13 @@ PACE 用 CMA-ES 从期望轨迹和实测响应中辨识关节惯量、阻尼、�
 | 把估计参数写回仿真，验证其他轨迹 | `scripts/pace/replay.py --task 任务名` | 仿真响应，可绘图或另存 |
 | 查看已完成的拟合 | `scripts/pace/plot_trajectory.py`、TensorBoard | 逐关节响应、评分、参数分布和均值 |
 
+环境开发与提交前检查见[自定义任务 lint 使用说明](docs/dev/contributing.md#isaac-lab-环境组织检查)。
+
 ## 安装与模型准备
 
 当前项目依赖 **Isaac Lab 3.0 和 Python 3.12**。`uv` 从项目的同级目录 `../IsaacLab` 加载框架源码。默认物理后端 Newton MJWarp 可独立运行。选择基于 Kit 的 `isaacsim_physx` 时，Isaac Lab 3.0 对应 Isaac Sim 6.2。[依赖声明](pyproject.toml) · [锁定版本](uv.lock)
 
-在两个仓库的共同父目录执行以下命令。示例中的 Isaac Lab 提交对应本项目当前使用的 3.0.0 源码。
+在两个仓库的共同父目录执行以下命令。下列提交是现有依赖锁配套的 Isaac Lab 开发快照。PACE 和消费项目的任务布局及静态符号索引均以 [v3.0.0 正式版外部模板](https://github.com/isaac-sim/IsaacLab/blob/v3.0.0/tools/template/generator.py) 为准。
 
 ```bash
 git clone https://github.com/isaac-sim/IsaacLab.git IsaacLab
@@ -96,7 +98,7 @@ uv run python scripts/pace/replay.py --task "$task" --visualizer none \
 
 | 设置位置 | 参数 | 含义与默认值 |
 | --- | --- | --- |
-| TOML `[run]` | `min_frequency`、`max_frequency`、`duration`、`seed` | 默认 `0.1 Hz` 至 `10 Hz`，持续 `20 s`，测量噪声种子为 `42`。前三项可用同名 `--` 选项覆盖 |
+| TOML `[run]` | `min_frequency`、`max_frequency`、`duration`、`seed` | X5 配置为 `0.1 Hz` 至 `4 Hz`，持续 `20 s`，测量噪声种子为 `42`。前三项可用同名 `--` 选项覆盖 |
 | TOML `[run]` | `visualize=false`、`plot=true` | `--visualize` / `--no-visualize` 控制仿真窗口，`--plot` 开启采集后的曲线图。全程无窗口运行时，在 TOML 中将两项都设为 `false` |
 | TOML `[model]`、`[channels]` | `path`、`position_joints`、`velocity_joints` | 模型路径相对于 TOML 所在目录。关节名列表指定输出列顺序，默认按左前、右前、左后、右后排列 |
 | TOML `[trajectory]` | `position_centers`、`position_amplitudes`、`position_directions` | 12 个腿关节各设一项，单位及公式与上节相同。方向只能取 `+1` 或 `-1` |
@@ -190,7 +192,7 @@ uv run python scripts/pace/replay.py --task "$task" --visualizer none \
 | `dof_pos`、`des_dof_pos` | 各 `[T, L]`，rad，单精度 | 已记录位置关节的测量角度和延迟前的期望角度。仅记录速度时可省略这两个字段 |
 | `dof_vel`、`des_dof_vel` | 各 `[T, W]`，rad/s，单精度 | 已记录速度关节的测量轮速和延迟前的期望轮速。仅记录位置时可省略这两个字段 |
 
-`fit.py` 让每个并行环境评估一组候选参数。`--num_envs` 同时决定种群大小，默认及最小值均为 `2`。默认设备为 `--device cuda`，默认关闭查看器。任务配置可通过 `env.sim2real.字段=值` 覆盖。[共享配置](src/pace_sim2real/tasks/manager_based/pace/pace_sim2real_env_cfg.py) · [ANYmal D 配置](src/pace_sim2real/tasks/manager_based/pace/anymal_pace_env_cfg.py) · [X5 配置](src/pace_sim2real/tasks/manager_based/pace/sevnce_pace_env_cfg.py)
+`fit.py` 让每个并行环境评估一组候选参数。`--num_envs` 同时决定种群大小，默认及最小值均为 `2`。默认设备为 `--device cuda`，默认关闭查看器。任务配置可通过 `env.sim2real.字段=值` 覆盖。[共享配置](src/pace_sim2real/tasks/pace/pace_sim2real_env_cfg.py) · [ANYmal D 配置](src/pace_sim2real/tasks/pace/config/anymal_d/env_cfg.py) · [X5 配置](src/pace_sim2real/tasks/pace/config/x5/env_cfg.py)
 
 | `env.sim2real` 下的字段 | 如何设置 |
 | --- | --- |

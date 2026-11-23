@@ -1,0 +1,129 @@
+# © 2025 ETH Zurich, Robotic Systems Lab
+# Author: Filip Bjelonic
+# Licensed under the Apache License 2.0
+
+
+from typing import Any, cast
+
+import torch
+
+from isaaclab.assets import ArticulationCfg
+from isaaclab.utils import configclass
+
+from pace_sim2real import PaceCfg, PaceSim2realEnvCfg, PaceSim2realSceneCfg
+from pace_sim2real.assets.assets import SEVNCE_X3MINI_CFG
+from pace_sim2real.utils import PaceDCMotorCfg
+
+from ... import mdp
+
+SEVNCE_PACE_X3MINI_ACTUATOR_CFG = PaceDCMotorCfg(
+    joint_names_expr=[".*_HAA", ".*_HFE", ".*_KFE", ".*_WHEEL"],
+    saturation_effort={".*_HAA": 200.0, ".*_HFE": 200.0, ".*_KFE": 300.0, ".*_WHEEL": 45.0},
+    actuator_effort_limit={
+        ".*_HAA": 171.0,
+        ".*_HFE": 171.0,
+        ".*_KFE": 255.0,
+        ".*_WHEEL": 30.0,
+    },
+    actuator_velocity_limit={".*_HAA": 6.0, ".*_HFE": 6.0, ".*_KFE": 8.0, ".*_WHEEL": 30.0},
+    stiffness={".*_HAA": 600.0, ".*_HFE": 600.0, ".*_KFE": 600.0, ".*_WHEEL": 0.0},
+    # P gain in Nm/rad
+    damping={".*_HAA": 10.0, ".*_HFE": 10.0, ".*_KFE": 10.0, ".*_WHEEL": 2.0},
+    # D gain in Nm s/rad
+    encoder_bias=0.0,  # encoder bias in radians
+    # note: modeling coulomb friction if friction = dynamic_friction
+    # > in newer Isaac Sim versions, friction is renamed to static_friction
+    friction=0.0,  # static friction coefficient (Nm)
+    dynamic_friction=0.0,  # dynamic friction coefficient (Nm)
+    viscous_friction=0.0,  # viscous friction coefficient (Nm s/rad)
+    max_delay=10,  # max delay in simulation steps
+)
+
+
+@configclass
+class SevnceX3miniPaceActionCfg:
+    """Action configuration for Sevnce X3mini robot in Pace Sim2Real environment."""
+
+    joint_pos = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=[".*_HAA", ".*_HFE", ".*_KFE"],
+        scale=1.0,
+        offset=0.0,
+        clip=None,
+        use_default_offset=False,
+        preserve_order=True,
+    )  # actions = absolute joint position targets
+    wheel_vel = mdp.JointVelocityActionCfg(
+        asset_name="robot",
+        joint_names=[".*_WHEEL"],
+        scale=1.0,
+        offset=0.0,
+        clip=None,
+        use_default_offset=False,
+        preserve_order=True,
+    )  # actions = absolute wheel velocity targets
+
+
+@configclass
+class SevnceX3miniPaceCfg(PaceCfg):
+    """Pace configuration for Sevnce X3mini robot."""
+
+    bounds_params: torch.Tensor = torch.zeros((61, 2))  # 3 * 16 + 12 leg biases + shared delay
+    separate_dynamic_friction: bool = False  # appends 16 dynamic/static friction ratios
+    leg_order: list[str] = [
+        "LF_HAA",
+        "LF_HFE",
+        "LF_KFE",
+        "RF_HAA",
+        "RF_HFE",
+        "RF_KFE",
+        "LH_HAA",
+        "LH_HFE",
+        "LH_KFE",
+        "RH_HAA",
+        "RH_HFE",
+        "RH_KFE",
+    ]
+    reference_leg_order: list[str] = []
+    reference_wheel_order: list[str] = ["LF_WHEEL", "RF_WHEEL", "LH_WHEEL", "RH_WHEEL"]
+    time_mode = "legacy_index"
+    legacy_sample_dt: float = 0.002  # legacy sample dt for data collected with older versions of Isaac Sim
+    wheel_order: list[str] = ["LF_WHEEL", "RF_WHEEL", "LH_WHEEL", "RH_WHEEL"]
+    joint_order: list[str] = leg_order + wheel_order  # order of joints in the robot model
+
+    def __post_init__(self):
+        # set bounds for parameters
+        self.bounds_params[:16, 0] = 1e-5
+        self.bounds_params[:16, 1] = 1.0  # armature between 1e-5 - 1.0 [kgm2]
+        self.bounds_params[16:32, 1] = 7.0  # dof_damping between 0.0 - 7.0 [Nm s/rad]
+        self.bounds_params[32:48, 1] = 0.5  # friction between 0.0 - 0.5
+        self.bounds_params[48:60, 0] = -0.1
+        self.bounds_params[48:60, 1] = 0.1  # bias between -0.1 - 0.1 [rad]
+        self.bounds_params[60, 1] = 10.0  # delay between 0.0 - 10.0 [sim steps]
+
+
+@configclass
+class SevnceX3miniPaceSceneCfg(PaceSim2realSceneCfg):
+    """Configuration for Sevnce X3mini robot in Pace Sim2Real environment."""
+
+    robot: ArticulationCfg = cast(Any, SEVNCE_X3MINI_CFG).replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        init_state=cast(Any, SEVNCE_X3MINI_CFG.init_state).replace(pos=(0.0, 0.0, 1.0)),
+        actuators={"joints": SEVNCE_PACE_X3MINI_ACTUATOR_CFG},
+    )
+    cast(Any, robot.spawn).fix_root_link = True
+
+
+@configclass
+class SevnceX3miniPaceEnvCfg(PaceSim2realEnvCfg):
+    scene: SevnceX3miniPaceSceneCfg = SevnceX3miniPaceSceneCfg(num_envs=4096, env_spacing=2.5)
+    actions: SevnceX3miniPaceActionCfg = SevnceX3miniPaceActionCfg()
+    sim2real: SevnceX3miniPaceCfg = SevnceX3miniPaceCfg()
+
+    def __post_init__(self):
+        # post init of parent
+        super().__post_init__()
+
+        # robot sim and control settings
+        self.sim.dt = 0.002  # 500Hz simulation
+        self.decimation = 1  # 500Hz control

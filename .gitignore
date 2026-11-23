@@ -69,6 +69,9 @@ _build
 
 # Tests
 tests/
+!/tests/
+/tests/*
+!/tests/test_task_organization.py
 
 # Docker history
 .isaac-lab-docker-history

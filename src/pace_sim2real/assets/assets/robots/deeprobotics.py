@@ -1,14 +1,15 @@
+# See LICENSE and NOTICE.
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import DelayedPDActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab_newton.sim.schemas import NewtonArticulationCfg
 from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxRigidBodyCfg
 
-from pace_sim2real.assets import PACE_ASSETS_DIR
+from pace_sim2real.assets import CUSTOM_ROBOTS_ASSETS_DIR
 
 DEEPROBOTICS_M20_CFG = ArticulationCfg(
     spawn=sim_utils.UsdFileCfg(
-        usd_path=f"{PACE_ASSETS_DIR}/robots/deeprobotics/M20/M20.usd",
+        usd_path=f"{CUSTOM_ROBOTS_ASSETS_DIR}/robots/deeprobotics/M20/M20.usd",
         activate_contact_sensors=True,
         rigid_props=PhysxRigidBodyCfg(
             disable_gravity=False,

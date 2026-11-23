@@ -1,0 +1,88 @@
+[
+  {
+    "case": "A2/A3 legal generator, stateful reward and official event",
+    "expected_exit": 0,
+    "actual_exit": 0,
+    "required_text": [],
+    "output": "registrations=0 environments=0 components=3 violations=0 unresolved=0 missing_rules=0",
+    "passed": true
+  },
+  {
+    "case": "A2 misplaced generator behind re-export",
+    "expected_exit": 1,
+    "actual_exit": 1,
+    "required_text": [
+      "ORG002",
+      "wrong.py:1"
+    ],
+    "output": "src/walk_isaaclabs/terrains/config.py:4:16: ORG002 walk.tasks.gait.wrong.surface defined at src/walk/tasks/gait/wrong.py:1; expected src/walk_isaaclabs/terrains\nregistrations=0 environments=0 components=3 violations=1 unresolved=0 missing_rules=0",
+    "passed": true
+  },
+  {
+    "case": "A3 string and two re-exports of misplaced reward",
+    "expected_exit": 1,
+    "actual_exit": 1,
+    "required_text": [
+      "ORG004",
+      "env_cfg.py"
+    ],
+    "output": "src/walk/tasks/gait/env_cfg.py:6:17: ORG004 walk.tasks.gait.env_cfg.Tracking defined at src/walk/tasks/gait/env_cfg.py:8; expected src/walk/tasks/gait/mdp/rewards\nregistrations=0 environments=0 components=3 violations=1 unresolved=0 missing_rules=0",
+    "passed": true
+  },
+  {
+    "case": "A4 runtime reward binding",
+    "expected_exit": 1,
+    "actual_exit": 1,
+    "required_text": [
+      "ORG005",
+      "env_cfg.py:6:",
+      "runtime factory"
+    ],
+    "output": "src/walk/tasks/gait/env_cfg.py:6:17: ORG005 resolve_at_runtime(): runtime factory resolve_at_runtime\nregistrations=0 environments=0 components=2 violations=0 unresolved=1 missing_rules=0",
+    "passed": true
+  },
+  {
+    "case": "A7 shared PACE actuator class in X5 and X3mini",
+    "expected_exit": 0,
+    "actual_exit": 0,
+    "required_text": [
+      "registrations=4"
+    ],
+    "output": "registrations=4 environments=5 components=36 violations=0 unresolved=0 missing_rules=0",
+    "passed": true
+  },
+  {
+    "case": "A1 config directory remains but registered definition moved",
+    "expected_exit": 1,
+    "actual_exit": 1,
+    "required_text": [
+      "ORG001",
+      "tasks/manager_based/pace/env_cfg.py"
+    ],
+    "output": "src/pace_sim2real/tasks/manager_based/pace/env_cfg.py:103:1: ORG006 task configuration pace_sim2real.tasks.manager_based.pace.env_cfg.SevnceX5PaceSceneCfg belongs in a task family\nsrc/pace_sim2real/tasks/manager_based/pace/env_cfg.py:115:1: ORG001 pace_sim2real.tasks.manager_based.pace.env_cfg.SevnceX5PaceEnvCfg belongs under pace_sim2real/tasks/<family>/\nsrc/pace_sim2real/tasks/manager_based/pace/env_cfg.py:117:38: ORG008 pace_sim2real.tasks.manager_based.pace.env_cfg.SevnceX5PaceActionCfg at src/pace_sim2real/tasks/manager_based/pace/env_cfg.py:44; no ownership rule for bound component\nsrc/pace_sim2real/tasks/pace/config/x5/__init__.py:11:36: ORG001 pace_sim2real.tasks.manager_based.pace.env_cfg.SevnceX5PaceEnvCfg defined at src/pace_sim2real/tasks/manager_based/pace/env_cfg.py:115; expected src/pace_sim2real/tasks/pace/config/x5\nregistrations=4 environments=5 components=35 violations=3 unresolved=0 missing_rules=1",
+    "passed": true
+  },
+  {
+    "case": "A7/A8 unresolved X5 actuator in asset replacement",
+    "expected_exit": 1,
+    "actual_exit": 0,
+    "required_text": [
+      "ORG005",
+      "config/x5/env_cfg.py:",
+      "missing_drive_factory"
+    ],
+    "output": "registrations=4 environments=5 components=36 violations=0 unresolved=0 missing_rules=0",
+    "passed": false
+  },
+  {
+    "case": "A8 resolvable component without ownership rule in same slot",
+    "expected_exit": 1,
+    "actual_exit": 0,
+    "required_text": [
+      "ORG008",
+      "UnclassifiedDrive"
+    ],
+    "output": "registrations=4 environments=5 components=36 violations=0 unresolved=0 missing_rules=0",
+    "passed": false
+  }
+]

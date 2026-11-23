@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE.
 """Exercise the fitted-parameter file contract independently of simulator startup."""
 
 import importlib

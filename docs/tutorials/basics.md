@@ -24,7 +24,7 @@ The core of the PACE framework is the definition and registration of a task-spec
 The reference implementation for ANYmal can be found at:
 
 ```
-pace-sim2real/source/pace_sim2real/pace_sim2real/tasks/manager_based/pace/anymal_pace_env_cfg.py
+pace-sim2real/src/pace_sim2real/tasks/pace/config/anymal_d/env_cfg.py
 ```
 
 This file provides the complete configuration of the robotic system and its associated PACE parameters.
@@ -216,7 +216,7 @@ Here, you inherit from `PaceSim2realSceneCfg` and specify your robot USD, initia
 To expose the environment to the optimization pipeline, it must be registered within IsaacLab’s task registry:
 
 ```
-pace-sim2real/source/pace_sim2real/pace_sim2real/tasks/manager_based/__init__.py
+pace-sim2real/src/pace_sim2real/tasks/pace/config/anymal_d/__init__.py
 ```
 
 Following the naming convention `Isaac-Pace-<robot>-v0`:
@@ -227,7 +227,7 @@ gym.register(
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.pace.anymal_pace_env_cfg:AnymalDPaceEnvCfg"
+        "env_cfg_entry_point": f"{__name__}.env_cfg:AnymalDPaceEnvCfg"
     },
 )
 ```
@@ -353,8 +353,8 @@ To use the identified parameters in your learning environment, integrate the PAC
 
 Copy the following files (or directly import them in your learning environment):
 
-* `pace-sim2real/source/pace_sim2real/pace_sim2real/utils/pace_actuator.py`
-* `pace-sim2real/source/pace_sim2real/pace_sim2real/utils/pace_actuator_cfg.py`
+* `pace-sim2real/src/pace_sim2real_isaaclabs/actuators/pace_actuator.py`
+* `pace-sim2real/src/pace_sim2real_isaaclabs/actuators/pace_actuator_cfg.py`
 
 Use the following procedure:
 

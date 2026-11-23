@@ -4,6 +4,25 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 repos:
+  - repo: local
+    hooks:
+      - id: isaaclab-task-lint
+        name: Isaac Lab task organization
+        entry: hooks/isaaclab-task-lint
+        language: script
+        always_run: true
+        pass_filenames: false
+      - id: ruff
+        name: Ruff
+        entry: uv run --locked ruff check
+        language: system
+        types_or: [python, pyi]
+      - id: license-notice
+        name: Check source license notice
+        language: pygrep
+        entry: '(?i)SPDX-License-Identifier:|licensed under|see LICENSE and NOTICE'
+        args: [--negate]
+        files: '\.(py|yaml|yml)$'
   - repo: https://github.com/python/black
     rev: 24.3.0
     hooks:
@@ -31,12 +50,6 @@ repos:
       - id: check-shebang-scripts-are-executable
       - id: detect-private-key
       - id: debug-statements
-  - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        name: isort (python)
-        args: ["--profile", "black", "--filter-files"]
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.1
     hooks:
@@ -50,34 +63,7 @@ repos:
       - id: codespell
         additional_dependencies:
         - tomli
-        exclude: "CONTRIBUTORS.md|docs/source/setup/walkthrough/concepts_env_design.rst"
-  # FIXME: Figure out why this is getting stuck under VPN.
-  # - repo: https://github.com/RobertCraigie/pyright-python
-  #   rev: v1.1.315
-  #   hooks:
-  #   - id: pyright
-  - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.1
-    hooks:
-      - id: insert-license
-        files: \.(py|ya?ml)$
-        args:
-          # - --remove-header    # Remove existing license headers. Useful when updating license.
-          - --license-filepath
-          - .github/LICENSE_HEADER.txt
-          - --use-current-year
-        exclude: "source/isaaclab_mimic/|scripts/imitation_learning/isaaclab_mimic/"
-  # Apache 2.0 license for mimic files
-  - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.1
-    hooks:
-      - id: insert-license
-        files: ^(source/isaaclab_mimic|scripts/imitation_learning/isaaclab_mimic)/.*\.py$
-        args:
-          # - --remove-header    # Remove existing license headers. Useful when updating license.
-          - --license-filepath
-          - .github/LICENSE_HEADER_MIMIC.txt
-          - --use-current-year
+        exclude: "CONTRIBUTORS.md|docs/assets/(logo|favicon|favicons/favicon)[.]svg$"
   - repo: https://github.com/pre-commit/pygrep-hooks
     rev: v1.10.0
     hooks:

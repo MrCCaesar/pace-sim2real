@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import torch
 import warp as wp
+
 from isaaclab.actuators import DCMotor
 from isaaclab.actuators.actuator_base import resolve_joint_parameter
 from isaaclab.utils import DelayBuffer
@@ -37,12 +38,11 @@ class PaceDCMotor(DCMotor):
 
     def __init__(self, cfg: PaceDCMotorCfg, *args, **kwargs):
         super().__init__(cfg, *args, **kwargs)
-        if isinstance(cfg.encoder_bias, (list, tuple)):
-            if len(cfg.encoder_bias) != self.num_joints:
-                raise ValueError(
-                    f"encoder_bias must have {self.num_joints} elements (one per joint), "
-                    f"but got {len(cfg.encoder_bias)}: {cfg.encoder_bias}"
-                )
+        if isinstance(cfg.encoder_bias, (list, tuple)) and len(cfg.encoder_bias) != self.num_joints:
+            raise ValueError(
+                f"encoder_bias must have {self.num_joints} elements (one per joint), "
+                f"but got {len(cfg.encoder_bias)}: {cfg.encoder_bias}"
+            )
         if isinstance(cfg.encoder_bias, (list, tuple)):
             self.encoder_bias = torch.tensor(cfg.encoder_bias, device=self._device, dtype=torch.float32).repeat(
                 self._num_envs, 1
@@ -96,7 +96,7 @@ class PaceDCMotor(DCMotor):
         self, control_action: ArticulationActions, joint_pos: torch.Tensor, joint_vel: torch.Tensor
     ) -> ArticulationActions:
         control_action = self._delay_command(control_action)
-        # compute actuator model with encoder bias subtracted from joint positions (joint position in encoder frame, not simulation frame)
+        # Evaluate feedback in encoder coordinates.
         control_action_sim = super().compute(control_action, joint_pos - self.encoder_bias, joint_vel)
         if control_action_sim.joint_efforts is not None:
             control_action_sim.joint_efforts = self._delay_effort(control_action_sim.joint_efforts)

@@ -1,3 +1,4 @@
+# See LICENSE and NOTICE.
 import csv
 import importlib.util
 import os
@@ -40,17 +41,17 @@ def test_mapping(tmp_path, legs, wheels):
         writer = csv.writer(f)
         writer.writerow(["time_s", *(f"{n}.{k}" for n, k in cols)])
         for i in range(5):
-            writer.writerow(
-                [
-                    0.1 + i * 0.002,
-                    *(
+            writer.writerow([
+                0.1 + i * 0.002,
+                *(
+                    (
                         int(not (i in (0, 4) and n == names[i % len(names)]))
                         if k == "feedback_valid"
                         else 10 * names.index(n) + i + len(k)
-                        for n, k in cols
-                    ),
-                ]
-            )
+                    )
+                    for n, k in cols
+                ),
+            ])
     data, groups, lines, counts = converter._read(path, legs, wheels)
     assert groups == [legs, wheels] and lines == [3, 4, 5] and counts == (5, 1, 1)
     keys = {"time"}

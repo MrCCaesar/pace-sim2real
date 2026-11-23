@@ -24,6 +24,9 @@ dependencies = [
     "scipy",
 ]
 
+[project.scripts]
+isaaclab-task-lint = "isaaclab_task_lint.__main__:main"
+
 [project.entry-points."isaaclab.tasks"]
 pace_sim2real = "pace_sim2real.tasks"
 
@@ -108,7 +111,7 @@ egl-probe = { CMAKE_POLICY_VERSION_MINIMUM = "3.5" }
 "torchvision" = { index = "pytorch-cu130" }
 
 [tool.uv.build-backend]
-module-name = "pace_sim2real"
+module-name = ["pace_sim2real", "pace_sim2real_isaaclabs", "isaaclab_task_lint"]
 
 [tool.ruff]
 line-length = 120
@@ -118,7 +121,7 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["pace_sim2real"]
+known-first-party = ["pace_sim2real", "pace_sim2real_isaaclabs", "isaaclab_task_lint"]
 section-order = [
     "future",
     "standard-library",

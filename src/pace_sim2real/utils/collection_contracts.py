@@ -24,10 +24,17 @@ class ActionMapping(TypedDict):
 def add_runtime_args(parser: argparse.ArgumentParser) -> None:
     """Register PACE runtime flags without importing any backend implementation.
 
-    Physics/viewer selectors remain owned by Isaac Lab's setup_preset_cli.
+    Selectors registered by Isaac Lab remain with its preset parser.
     Kit-only options are inert until launch_simulation selects a Kit runtime.
     """
+    from isaaclab_tasks.utils.hydra import PresetTarget
+
     group = parser.add_argument_group("runtime")
+    if not hasattr(PresetTarget, "VISUALIZER"):
+        # v3.0.0 accepts the visualizer on the launcher namespace. Newer preset parsers own this selector.
+        from isaaclab.app.sim_launcher import _parse_visualizer_csv
+
+        group.add_argument("--visualizer", "--viz", type=_parse_visualizer_csv, help="Comma-separated viewer names.")
     group.add_argument("--device", default=None, help="Simulation device; default comes from the task config.")
     group.add_argument("--max_visible_envs", type=int, default=None, help="Limit the number of visible environments.")
     group.add_argument("--deterministic", action="store_true", help="Request deterministic simulation/rendering.")

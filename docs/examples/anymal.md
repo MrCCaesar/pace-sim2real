@@ -139,8 +139,8 @@ To use the identified parameters in your learning environment, integrate the PAC
 
 Copy the following files (or directly import them in your learning environment):
 
-* `pace-sim2real/source/pace_sim2real/pace_sim2real/utils/pace_actuator.py`
-* `pace-sim2real/source/pace_sim2real/pace_sim2real/utils/pace_actuator_cfg.py`
+* `pace-sim2real/src/pace_sim2real_isaaclabs/actuators/pace_actuator.py`
+* `pace-sim2real/src/pace_sim2real_isaaclabs/actuators/pace_actuator_cfg.py`
 
 Use the following procedure:
 
