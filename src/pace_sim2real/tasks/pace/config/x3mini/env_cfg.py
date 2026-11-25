@@ -90,13 +90,14 @@ class SevnceX3miniPaceCfg(PaceCfg):
     legacy_sample_dt: float = 0.002  # legacy sample dt for data collected with older versions of Isaac Sim
     wheel_order: list[str] = ["LF_WHEEL", "RF_WHEEL", "LH_WHEEL", "RH_WHEEL"]
     joint_order: list[str] = leg_order + wheel_order  # order of joints in the robot model
+    separate_dynamic_friction: bool = True
 
     def __post_init__(self):
         # set bounds for parameters
         self.bounds_params[:16, 0] = 1e-5
         self.bounds_params[:16, 1] = 1.0  # armature between 1e-5 - 1.0 [kgm2]
         self.bounds_params[16:32, 1] = 7.0  # dof_damping between 0.0 - 7.0 [Nm s/rad]
-        self.bounds_params[32:48, 1] = 0.5  # friction between 0.0 - 0.5
+        self.bounds_params[32:48, 1] = 1.0  # friction between 0.0 - 0.5
         self.bounds_params[48:60, 0] = -0.1
         self.bounds_params[48:60, 1] = 0.1  # bias between -0.1 - 0.1 [rad]
         self.bounds_params[60, 1] = 10.0  # delay between 0.0 - 10.0 [sim steps]
